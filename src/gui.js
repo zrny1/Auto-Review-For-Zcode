@@ -110,6 +110,10 @@ const GUI_PS_SCRIPT = [
   "if($rules.Count -eq 0){ $rules=@(Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json) }",
   "$provTable=$null; $provKeys=@()",
   "if(Test-Path $env:AR_ZCODE_CFG){ try{ $zc=Get-Content $env:AR_ZCODE_CFG -Raw -Encoding UTF8 | ConvertFrom-Json; if($zc.provider){ $provTable=$zc.provider; $provKeys=@($zc.provider.PSObject.Properties.Name) } }catch{} }",
+  // 解析“跟随主 agent”时实际启用的 provider（与 provider.js 语义一致），
+  // 用于在跟随模式下填充模型下拉——否则下拉无选项，保存会把已有模型设置清空
+  "$followProv=$null",
+  "if($provTable){ foreach($k in $provKeys){ if($provTable.$k -and $provTable.$k.enabled -eq $true){ $followProv=$k; break } } }",
   // ── 窗体 ──
   "$f=New-Object System.Windows.Forms.Form",
   "$f.Text='auto-review 设置'",
@@ -151,10 +155,9 @@ const GUI_PS_SCRIPT = [
   "$cbModel.Location=New-Object System.Drawing.Point(452,242); $cbModel.Size=New-Object System.Drawing.Size(284,28)",
   "function Fill-Models{",
   "  $cbModel.Items.Clear(); [void]$cbModel.Items.Add('（默认）')",
-  "  if($provTable -and $cbProv.SelectedIndex -gt 0){",
-  "    $key=$provKeyMap[[string]$cbProv.SelectedItem]",
-  "    if($provTable.$key -and $provTable.$key.models){ foreach($m in @($provTable.$key.models.PSObject.Properties.Name)){ [void]$cbModel.Items.Add($m) } }",
-  "  }",
+  "  $key=$null",
+  "  if($cbProv.SelectedIndex -gt 0){ $key=$provKeyMap[[string]$cbProv.SelectedItem] } elseif($followProv){ $key=$followProv }",
+  "  if($provTable -and $key -and $provTable.$key -and $provTable.$key.models){ foreach($m in @($provTable.$key.models.PSObject.Properties.Name)){ [void]$cbModel.Items.Add($m) } }",
   "  $curModel=[string]$settings.model",
   "  if($curModel -and $cbModel.Items.Contains($curModel)){ $cbModel.SelectedItem=$curModel } else { $cbModel.SelectedIndex=0 }",
   "}",
