@@ -3,6 +3,16 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 8bae62f
+
+- 修改性质：bug 修复（安全加固）+ 审批框显示机制调查
+- 背景/需求：①审查发现 allow 白名单规则（^ls\b）可放行 "ls; rm -rf x" 复合命令——全文扫描以白名单命令开头即整体放行；②用户观察到审批框"有时显示审查分析、有时不显示"（仅 ls 验证时显示）。
+- 方案/决策：
+  - 复合命令修复（用户提案+加固）：按顶层分隔符（; && || | 换行，引号与 $()/反引号内不切分）拆分子命令逐段过规则——任一段 deny → 整体拦截、任一段 ask → 整体转人工（deny/ask 不降级 LLM，保持用户规则权威）、全段 allow → 放行、混合 → 降级 LLM 审查完整命令；另堵住全文扫描路径：allow 规则禁止命中复合命令全文；
+  - 审批框不稳定机制（客户端源码证实）：模式引擎对命令分副作用等级，ls 判低风险→模式 allow→hook ask 走 escalated 分支（框内显示 reason）；rm/node 判需审批→模式 ask→hook ask 同向叠加，fTr 合并丢弃 reason。属客户端能力边界，插件已用 additionalContext 转述通道兜底。
+- 影响范围：src/reviewer.js（matchDangerRules 拆分 + splitTopLevelCommands + matchCompoundRules + 管线接入）、单测 +2 项（18/18）、已同步插件缓存。
+- 验证结果：A `ls; ls -la` 全段 allow → 复合放行；B `ls; rm -rf ...` 混合 → 降级 LLM ask high；C `ls` 单命令正常白名单；allow 复合全文抑制有专项断言。
+
 ## c140b2e
 
 - 修改性质：bug 修复（LLM 调用层）+ 实机验证完成
