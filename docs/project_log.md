@@ -3,6 +3,14 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 3a3fdef
+
+- 修改性质：bug 修复（构建/安装路径）
+- 背景/需求：用户添加市场源为项目根目录时报 `Marketplace manifest not found`——本地市场源目录必须含市场清单，项目此前只有插件清单。
+- 方案/决策：项目根目录兼任市场源，新增 `.zcode-plugin/marketplace.json`（name=auto-review-local，plugins[0].source="./" 相对路径指向自身）；放弃的备选：在 D:\Demo 父目录建市场清单（污染项目外目录）、提供独立 marketplace 子目录（多一层嵌套无收益）。
+- 影响范围：新增市场清单 + 安装文档两处更新；插件本体（src/hooks/commands）零改动。
+- 验证结果：清单静态校验通过（名称正则、两清单插件名一致、source 不逃逸插件根）；实机添加待用户重试，备选兼容路径 `.claude-plugin/marketplace.json` 已记录在归档文档。
+
 ## e226492
 
 - 修改性质：新功能（v0.1 完整实现）
