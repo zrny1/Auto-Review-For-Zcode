@@ -85,7 +85,9 @@ function matchDangerRules(rule_text) {
       } else {
         t_reason = `[auto-review] ${t_desc}\n该操作命中你设置的转人工规则，请确认。`;
       }
-      return { action: t_action, reason: t_reason, source: "rule" };
+      // ask 的 reason 在客户端"模式已 ask"时不进审批框，同步走 additionalContext 送入主 agent 上下文
+      const t_extra = t_action === ACTION_ASK ? { additionalContext: t_reason } : {};
+      return { action: t_action, reason: t_reason, source: "rule", ...t_extra };
     }
   }
   return null;
@@ -299,9 +301,11 @@ async function runLlmReview(tool_name, tool_input, settings) {
     t_reason = formatVerdictReason(t_verdict);
   }
   logWrite("INFO", "llm", `${t_verdict.decision} risk=${t_verdict.risk_level} ${t_duration_s}s`);
-  // 只有 LLM 结论入缓存：规则层是即时的，且规则变更后旧缓存会失效
+  // 只有 LLM 结论入缓存（规则层是即时的，且规则变更后旧缓存可能失效）
   writeCachedDecision(computeCacheKey(tool_name, tool_input), { action: t_verdict.decision, reason: t_reason }, settings.cache_ttl_seconds);
-  return { action: t_verdict.decision, reason: t_reason };
+  // ask 决策双发：reason 给客户端 deny/升级路径，additionalContext 保证分析进入主 agent 上下文
+  const t_extra = t_verdict.decision === ACTION_ASK ? { additionalContext: t_reason } : {};
+  return { action: t_verdict.decision, reason: t_reason, ...t_extra };
 }
 
 /**
@@ -336,7 +340,7 @@ async function reviewToolUse(hook_input) {
     }
     if (!t_rule_text) {
       // 送审文本为空说明输入形态异常，保守转人工
-      return { action: ACTION_ASK, reason: "[auto-review] 无法解析工具输入，已转人工审查。", source: "malformed" };
+      return { action: ACTION_ASK, reason: "[auto-review] 无法解析工具输入，已转人工审查。", source: "malformed", additionalContext: "[auto-review] 无法解析工具输入，已转人工审查。" };
     }
 
     // ④ 缓存层：相同调用短期内复用结论，降低延迟与 token 消耗
@@ -344,7 +348,9 @@ async function reviewToolUse(hook_input) {
     const t_cached = readCachedDecision(t_cache_key, t_settings.cache_ttl_seconds);
     if (t_cached) {
       logWrite("INFO", "cache", `${t_cached.action} ${t_tool_name}: ${t_short}`);
-      return { ...t_cached, source: "cache" };
+      // ask 结论同样双发 additionalContext（兼容不含该字段的旧缓存条目）
+      const t_extra = t_cached.action === ACTION_ASK ? { additionalContext: t_cached.reason } : {};
+      return { ...t_cached, source: "cache", ...t_extra };
     }
 
     // ⑤ 安全子 agent（LLM）审查
@@ -360,6 +366,7 @@ async function reviewToolUse(hook_input) {
       action: ACTION_ASK,
       reason: `[auto-review] 安全审查不可用（${t_cause}），已转人工审查。`,
       source: "fallback",
+      additionalContext: `[auto-review] 安全审查不可用（${t_cause}），已转人工审查。该操作未经安全评估，建议用户谨慎确认。`,
     };
   }
 }

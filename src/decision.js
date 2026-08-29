@@ -47,6 +47,9 @@ function emitDecision(decision) {
         hookEventName: "PreToolUse",
         permissionDecision: decision.action,
         permissionDecisionReason: decision.reason,
+        // 客户端在"模式已 ask + hook ask"时不渲染 reason（fTr 合并丢弃），
+        // additionalContext 是把审查分析送进主 agent 上下文的唯一通道
+        ...(decision.additionalContext ? { additionalContext: decision.additionalContext } : {}),
       },
     };
   }
