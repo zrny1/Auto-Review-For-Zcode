@@ -1,0 +1,12 @@
+{
+  "name": "auto-review",
+  "version": "0.1.0",
+  "description": "ZCode 自动审查权限插件（安全子agent门卫），运行时零第三方依赖",
+  "type": "module",
+  "private": true,
+  "author": "hh-zyb",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|ApplyPatch",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/src/hook_main.js"],
+            "timeoutMs": 60000,
+            "statusMessage": "安全子agent审查中"
+          }
+        ]
+      }
+    ]
+  }
+}

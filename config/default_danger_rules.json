@@ -1,0 +1,72 @@
+[
+  {
+    "pattern": "rm\\s+-([a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\\s+(/(\\s|$)|~|\\$HOME|[a-z]:\\\\)",
+    "action": "deny",
+    "description": "递归强制删除根目录/家目录/盘符，不可恢复"
+  },
+  {
+    "pattern": "^(format|mkfs(\\.[a-z0-9]+)?|diskpart)\\b",
+    "action": "deny",
+    "description": "格式化磁盘/分区表操作"
+  },
+  {
+    "pattern": "\\bdd\\s+[^;|&]*of=/dev/(sd|nvme|disk)",
+    "action": "deny",
+    "description": "dd 直接写入块设备，可致整盘数据损毁"
+  },
+  {
+    "pattern": ":\\(\\)\\{.*\\};:",
+    "action": "deny",
+    "description": "fork 炸弹，会耗尽系统进程资源"
+  },
+  {
+    "pattern": "chmod\\s+-R\\s+777\\s+/",
+    "action": "deny",
+    "description": "对根目录递归放开全部权限"
+  },
+  {
+    "pattern": "(^\\s*|[;|&]\\s*)(shutdown|reboot|halt|poweroff|restart-computer)\\b",
+    "action": "deny",
+    "description": "关机/重启主机，中断所有工作"
+  },
+  {
+    "pattern": "git\\s+push\\s+[^;|&]*(--force\\b|-f(\\s|$))",
+    "action": "ask",
+    "description": "强推可能覆盖远程分支历史，不可逆"
+  },
+  {
+    "pattern": "(curl|wget|irm|iwr)[^|;&]*\\|\\s*(sudo\\s+)?(iex|(ba|z|da)?sh)\\b",
+    "action": "ask",
+    "description": "下载远程内容直接管道执行，来源不可信"
+  },
+  {
+    "pattern": "(>>?|\\btee\\b)[^;|&]*\\.(bashrc|zshrc|bash_profile|profile)\\b",
+    "action": "ask",
+    "description": "修改 shell 启动配置，可能植入持久化代码"
+  },
+  {
+    "pattern": "reg\\s+(add|delete|import)\\b",
+    "action": "ask",
+    "description": "写/删 Windows 注册表，影响系统行为"
+  },
+  {
+    "pattern": "(rmdir|rd)\\s+/s\\b|del\\s+/(s|q)\\b|remove-item\\s+[^|;&]*-recurse",
+    "action": "ask",
+    "description": "Windows 递归删除目录/强制删除文件"
+  },
+  {
+    "pattern": "\\bsudo\\b",
+    "action": "ask",
+    "description": "提权执行，影响范围超出当前用户"
+  },
+  {
+    "pattern": "taskkill\\s+/(f|im)\\b|stop-process\\s+[^|;&]*-force",
+    "action": "ask",
+    "description": "强制结束进程，可能中断其他工作"
+  },
+  {
+    "pattern": "npm\\s+publish\\b",
+    "action": "ask",
+    "description": "对外发布包，属于不可撤回的外部动作"
+  }
+]

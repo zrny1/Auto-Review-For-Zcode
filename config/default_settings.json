@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "review_tools": ["Bash"],
+  "provider": "",
+  "model": "",
+  "timeout_ms": 30000,
+  "cache_ttl_seconds": 3600,
+  "max_payload_chars": 8000
+}
