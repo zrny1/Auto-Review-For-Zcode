@@ -3,6 +3,19 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 0.2.0 周期（c140b2e ~ 6e6dbfb，2026-08-29）
+
+- 修改性质：新功能批次 + bug 修复批次 + 文档治理
+- 背景/需求：实机验证暴露三类问题（GLM thinking 致空响应/超时、客户端审批框同向叠加不渲染 hook 文本、复合命令可被 allow 白名单绕过）；用户追加需求（自有审批对话框、图形配置、现代化美化、隐私清洗）。
+- 方案/决策：
+  - thinking 修复：诊断脚本直调 API 对照实验确诊混合推理机制，anthropic 协议显式 disabled（16s→3.3s）；
+  - 审批框显示边界：客户端合并函数 fTr 在同向叠加时丢弃 hook reason、框不渲染 description 字段（两次实测+源码穷尽确认），插件侧以**自有对话框**取代（用户点击映射 hook allow/deny，超时回落原生审批）而非操纵客户端 UI；
+  - 复合命令：用户提案+加固（deny/ask 不降级 LLM；allow 全文抑制）；
+  - GUI：WinForms 深色现代化（Win11 DWM 圆角、自绘勾选/下拉/列表、扁平分区）；
+  - 关键排障：PS 事件处理器作用域隔离（弹框风暴根因）、windowsHide 的 SW_HIDE 不被 ShowDialog 覆盖（窗口不可见根因，ShowWindow 显式修复）、模型下拉空态清空回归。
+- 影响范围：新增 dialog.js/gui.js/4 个维护脚本，删除 toast.js；reviewer/provider/hook_main/ctl/命令文档/默认配置更新；hooks 预算 60s→1h。
+- 验证结果：单测 19/19、冒烟 14 项、PS 校验双绿；四轮 8 项实机验证全过（含复合命令两组）；对话框与 GUI 实机验证通过（探测器确认 visible=True）；文档隐私清洗后复扫零残留。
+
 ## 8bae62f
 
 - 修改性质：bug 修复（安全加固）+ 审批框显示机制调查
@@ -33,7 +46,7 @@
 
 - 修改性质：bug 修复（构建/安装路径）
 - 背景/需求：用户添加市场源为项目根目录时报 `Marketplace manifest not found`——本地市场源目录必须含市场清单，项目此前只有插件清单。
-- 方案/决策：项目根目录兼任市场源，新增 `.zcode-plugin/marketplace.json`（name=auto-review-local，plugins[0].source="./" 相对路径指向自身）；放弃的备选：在 D:\Demo 父目录建市场清单（污染项目外目录）、提供独立 marketplace 子目录（多一层嵌套无收益）。
+- 方案/决策：项目根目录兼任市场源，新增 `.zcode-plugin/marketplace.json`（name=auto-review-local，plugins[0].source="./" 相对路径指向自身）；放弃的备选：在 <项目父目录> 父目录建市场清单（污染项目外目录）、提供独立 marketplace 子目录（多一层嵌套无收益）。
 - 影响范围：新增市场清单 + 安装文档两处更新；插件本体（src/hooks/commands）零改动。
 - 验证结果：清单静态校验通过（名称正则、两清单插件名一致、source 不逃逸插件根）；实机添加待用户重试，备选兼容路径 `.claude-plugin/marketplace.json` 已记录在归档文档。
 
