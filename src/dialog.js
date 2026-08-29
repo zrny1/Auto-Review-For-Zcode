@@ -167,7 +167,7 @@ function askUserViaDialog(title, command, reason) {
   try {
     const t_result = spawnSync(
       "powershell",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", DIALOG_PS_SCRIPT],
+      ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", DIALOG_PS_SCRIPT],
       {
         env: {
           ...process.env,

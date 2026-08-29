@@ -65,6 +65,8 @@ const GUI_PS_SCRIPT = [
   "$f.Text='auto-review 设置'",
   "$f.BackColor=C '" + THEME.bg + "'",
   "$f.StartPosition='CenterScreen'; $f.FormBorderStyle='FixedDialog'; $f.MaximizeBox=$false",
+  // 弹出时置顶+聚焦，1 秒后解除置顶（避免淹没在其他窗口后面，又不长期霸占最前）
+  "$f.TopMost=$true",
   "$f.Size=New-Object System.Drawing.Size(740,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
   "$title=Lbl 'auto-review 设置' '" + THEME.text + "' 14 ([System.Drawing.FontStyle]::Bold)",
   "$title.Location=New-Object System.Drawing.Point(22,16)",
@@ -236,7 +238,7 @@ const GUI_PS_SCRIPT = [
   "})",
   "$bClose.Add_Click({ $f.Close() })",
   "$f.Controls.AddRange(@($title,$gSw,$gTools,$gModel,$gRules,$sep,$saved,$bClose,$bSave))",
-  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4) } catch {} })",
+  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4) } catch {}; $f.Activate(); $untop=New-Object System.Windows.Forms.Timer; $untop.Interval=1000; $untop.Add_Tick({ $f.TopMost=$false; $untop.Stop() }); $untop.Start() })",
   "[void]$f.ShowDialog()",
 ].join("\n");
 
@@ -252,7 +254,7 @@ const GUI_PS_SCRIPT = [
   try {
     const t_result = spawnSync(
       "powershell",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", GUI_PS_SCRIPT],
+      ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", GUI_PS_SCRIPT],
       {
         env: {
           ...process.env,
