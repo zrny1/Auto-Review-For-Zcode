@@ -13,8 +13,10 @@
  */
 
 import { reviewToolUse } from "./reviewer.js";
-import { emitDecision, emitCrash } from "./decision.js";
+import { emitDecision, emitCrash, ACTION_ASK } from "./decision.js";
 import { logWrite } from "./common.js";
+import { compressReasonForToast, notifyAsk } from "./toast.js";
+import { loadSettings } from "./settings.js";
 
 /**
  * 函数功能: 全量读取 stdin（hook 输入一次性传入，无流式交互）
@@ -53,6 +55,28 @@ async function main() {
   }
 
   const t_decision = await reviewToolUse(t_input);
+
+  // ask 决策先派发桌面通知：客户端同向叠加路径下审批框不渲染 hook 文本，
+  // 通知是唯一稳定"决策时可见"的分析通道；派发不阻塞（分离进程），失败不影响决策
+  if (t_decision.action === ACTION_ASK && !process.env.AUTO_REVIEW_DISABLE_TOAST) {
+    try {
+      const t_settings = loadSettings();
+      if (t_settings.toast_on_ask !== false) {
+        const t_command = t_input && t_input.tool_input && typeof t_input.tool_input.command === "string"
+          ? t_input.tool_input.command.replace(/\s+/g, " ").slice(0, 60)
+          : "";
+        const t_compressed = compressReasonForToast(t_decision.reason);
+        notifyAsk(
+          `[auto-review] 需人工确认${t_command ? ": " + t_command : ""}`,
+          t_compressed.line1,
+          t_compressed.line2,
+        );
+      }
+    } catch {
+      // 通知失败静默：决策输出不受影响
+    }
+  }
+
   emitDecision(t_decision);
 }
 

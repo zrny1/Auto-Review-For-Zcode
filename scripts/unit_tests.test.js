@@ -279,6 +279,24 @@ test("reviewer: buildAnnotatedInput 只注解 description、命令不动、带�
   assert.ok(t_long.description.length <= 1500);
 });
 
+test("toast: reason 压缩为两行通知文本", async () => {
+  const { compressReasonForToast } = await import("../src/toast.js");
+  const t_reason = [
+    "[auto-review] 风险级别 high: 递归删除测试目录",
+    "风险点:",
+    "- 不可逆删除",
+    "- 不进回收站",
+    "影响范围: <测试目录>",
+  ].join("\n");
+  const t_toast = compressReasonForToast(t_reason);
+  assert.equal(t_toast.line1, "[auto-review] 风险级别 high: 递归删除测试目录");
+  assert.ok(t_toast.line2.includes("风险点: 不可逆删除；不进回收站"));
+  assert.ok(t_toast.line2.includes("影响范围: <测试目录>"));
+  // 超长截断
+  const t_long = compressReasonForToast("x".repeat(300) + "\n- " + "y".repeat(300));
+  assert.ok(t_long.line1.length <= 180 && t_long.line2.length <= 180);
+});
+
 test("收尾: 清理临时目录", () => {
   fs.rmSync(t_tmp_dir, { recursive: true, force: true });
 });

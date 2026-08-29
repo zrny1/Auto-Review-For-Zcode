@@ -36,6 +36,7 @@ const SETTABLE_KEYS = {
   timeout_ms: "int",
   cache_ttl_seconds: "int",
   max_payload_chars: "int",
+  toast_on_ask: "boolean",
 };
 
 // 数值键的合法区间，与 settings.js 加载时的钳制保持一致

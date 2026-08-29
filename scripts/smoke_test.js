@@ -40,7 +40,8 @@ fs.writeFileSync(path.join(t_data_dir, "settings.json"), JSON.stringify({
   timeout_ms: 5000, cache_ttl_seconds: 0, max_payload_chars: 8000,
 }));
 
-const t_env = { ...process.env, AUTO_REVIEW_DATA_DIR: t_data_dir, AUTO_REVIEW_ZCODE_CONFIG: t_zcode_config };
+// AUTO_REVIEW_DISABLE_TOAST：冒烟中的 ask 用例不弹真实系统通知
+const t_env = { ...process.env, AUTO_REVIEW_DATA_DIR: t_data_dir, AUTO_REVIEW_ZCODE_CONFIG: t_zcode_config, AUTO_REVIEW_DISABLE_TOAST: "1" };
 
 let g_pass_count = 0;
 

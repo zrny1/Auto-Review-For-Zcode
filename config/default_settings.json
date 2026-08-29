@@ -5,5 +5,6 @@
   "model": "",
   "timeout_ms": 30000,
   "cache_ttl_seconds": 3600,
-  "max_payload_chars": 8000
+  "max_payload_chars": 8000,
+  "toast_on_ask": true
 }
