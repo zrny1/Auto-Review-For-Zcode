@@ -17,7 +17,7 @@
 ## 快速开始
 
 ```bash
-# 1. 安装：ZCode 设置 → 插件管理 → 发现 → + 添加本地 marketplace（选本项目父目录）→ 安装 auto-review
+# 1. 安装：ZCode 设置 → 插件管理 → 发现 → + 添加本地 marketplace（选本项目根目录，含市场清单）→ 安装 auto-review
 # 2. 开启：
 /auto-review on
 # 3. 权限模式切到「自动编辑模式」即可

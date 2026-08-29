@@ -1,0 +1,11 @@
+{
+  "name": "auto-review-local",
+  "plugins": [
+    {
+      "name": "auto-review",
+      "source": "./",
+      "description": "自动审查权限插件：上下文干净的安全子agent 审查权限外请求，安全放行、危险转人工",
+      "version": "0.1.0"
+    }
+  ]
+}
