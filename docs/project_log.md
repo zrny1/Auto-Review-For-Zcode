@@ -3,6 +3,14 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## c140b2e
+
+- 修改性质：bug 修复（LLM 调用层）+ 实机验证完成
+- 背景/需求：实机验证暴露三类失败：Turbo 30s 超时、flash"响应为空"、客户端 hook 10s 判失败（Permission request failed）。用户要求查清原因。
+- 方案/决策：诊断脚本直调 API 对比实验确诊——GLM 系为混合推理模型，遇危险命令默认长思考（~2652 字符≈700+ token），吃掉 max_tokens=1024 额度导致正文块为空，且思考耗时 16s 级撞上客户端 hook 等待上限。修复：anthropic 请求显式 `thinking:{type:"disabled"}` + max_tokens 提至 2048 双保险。实测 rm -rf 审查 16s/空响应 → **3.3s 带完整三段式分析**。
+- 影响范围：src/provider.js（anthropic 分支）、新增 scripts/debug_llm_response.js 诊断脚本；已同步已安装插件缓存。
+- 验证结果：6 项实机测试全部通过（详见 review.log）——安全命令自动放行（含超时兜底转人工路径）；rm -rf 与删除脚本均 4s 级转人工并展示分析/风险点/影响范围；deny/ask/allow 三种规则动作分别实现秒拦/转人工/白名单直放；规则层决策全部 `[rule]` 来源，LLM 决策全部 `[llm]` 来源。测试后规则表恢复出厂 14 条。
+
 ## a012812
 
 - 修改性质：bug 修复（安装路径）
