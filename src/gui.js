@@ -44,7 +44,7 @@ const GUI_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
-  "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);}' } catch {}",
+  "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);}' } catch {}",
   "try { Add-Type -AssemblyName Microsoft.VisualBasic } catch {}",
   "$NL=[char]10",
   "function C($hex){ [System.Drawing.ColorTranslator]::FromHtml($hex) }",
@@ -241,6 +241,10 @@ const GUI_PS_SCRIPT = [
   "$bClose.Add_Click({ $f.Close() })",
   "$f.Controls.AddRange(@($title,$gSw,$gTools,$gModel,$gRules,$sep,$saved,$bClose,$bSave))",
   "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $f.Activate() } catch {} })",
+  // 强制可见：spawnSync 的 windowsHide 会让 STARTUPINFO 携带 SW_HIDE，
+  // ShowDialog 在该链路上不覆盖它（实测窗口建成但 visible=False），故显式 ShowWindow
+  "[void]$f.Handle",
+  "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
   "[void]$f.ShowDialog()",
 ].join("\n");
 

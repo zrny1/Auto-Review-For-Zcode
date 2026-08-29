@@ -67,7 +67,7 @@ const DIALOG_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
-  "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);}' } catch {}",
+  "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);}' } catch {}",
   "$NL=[char]10",
   "function C($hex){ [System.Drawing.ColorTranslator]::FromHtml($hex) }",
   "function Lbl($text,$hex,$size,$style){ $l=New-Object System.Windows.Forms.Label; $l.Text=$text; $l.ForeColor=C $hex; $l.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',$size,$style); $l.AutoSize=$true; return $l }",
@@ -148,6 +148,9 @@ const DIALOG_PS_SCRIPT = [
   "$bd.Add_Click({$f.Tag='deny';$f.Close()})",
   "$f.AcceptButton=$bd",
   "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4) } catch {} })",
+  // 强制可见：windowsHide 的 SW_HIDE 在部分链路上不被 ShowDialog 覆盖，显式 ShowWindow
+  "[void]$f.Handle",
+  "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
   "[void]$f.ShowDialog()",
   "switch($f.Tag){'allow'{exit 0}default{exit 1}}",
 ].join("\n");
