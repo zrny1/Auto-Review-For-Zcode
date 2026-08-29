@@ -13,9 +13,9 @@
  */
 
 import { reviewToolUse } from "./reviewer.js";
-import { emitDecision, emitCrash, ACTION_ASK } from "./decision.js";
+import { emitDecision, emitCrash, ACTION_ALLOW, ACTION_ASK, ACTION_DENY } from "./decision.js";
 import { logWrite } from "./common.js";
-import { compressReasonForToast, notifyAsk } from "./toast.js";
+import { askUserViaDialog, DIALOG_TIMEOUT_SECONDS } from "./dialog.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -56,24 +56,39 @@ async function main() {
 
   const t_decision = await reviewToolUse(t_input);
 
-  // ask 决策先派发桌面通知：客户端同向叠加路径下审批框不渲染 hook 文本，
-  // 通知是唯一稳定"决策时可见"的分析通道；派发不阻塞（分离进程），失败不影响决策
-  if (t_decision.action === ACTION_ASK && !process.env.AUTO_REVIEW_DISABLE_TOAST) {
+  // ask 决策改为插件自有审批框：客户端同向叠加路径不渲染 hook 文本且无法操纵其 UI，
+  // 由用户在本对话框中直接裁决——允许→hook allow（客户端自动放行）、拒绝→hook deny（阻断）、
+  // 超时/失败→保持 ask（回落客户端原生框，优雅退化）
+  if (t_decision.action === ACTION_ASK && !process.env.AUTO_REVIEW_DISABLE_DIALOG) {
     try {
       const t_settings = loadSettings();
-      if (t_settings.toast_on_ask !== false) {
+      if (t_settings.dialog_on_ask !== false) {
         const t_command = t_input && t_input.tool_input && typeof t_input.tool_input.command === "string"
-          ? t_input.tool_input.command.replace(/\s+/g, " ").slice(0, 60)
+          ? t_input.tool_input.command
           : "";
-        const t_compressed = compressReasonForToast(t_decision.reason);
-        notifyAsk(
-          `[auto-review] 需人工确认${t_command ? ": " + t_command : ""}`,
-          t_compressed.line1,
-          t_compressed.line2,
+        const t_body = `【待审查命令】\n${t_command || "(未知)"}\n\n${t_decision.reason}`;
+        const t_choice = askUserViaDialog(
+          "[auto-review] 人工审查",
+          t_body,
+          DIALOG_TIMEOUT_SECONDS,
         );
+        if (t_choice === "allow") {
+          logWrite("INFO", "dialog", `用户允许: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
+          t_decision.action = ACTION_ALLOW;
+          t_decision.reason = `${t_decision.reason}\n(用户已在 auto-review 审查对话框中批准)`;
+          delete t_decision.additionalContext;
+        } else if (t_choice === "deny") {
+          logWrite("INFO", "dialog", `用户拒绝: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
+          t_decision.action = ACTION_DENY;
+          t_decision.reason = `[auto-review] 用户在审查对话框中拒绝了该操作。\n${t_decision.reason}`;
+          delete t_decision.additionalContext;
+        } else {
+          logWrite("INFO", "dialog", `对话框超时/失败，回落客户端审批: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
+        }
       }
-    } catch {
-      // 通知失败静默：决策输出不受影响
+    } catch (t_error) {
+      // 对话框故障回落客户端审批，绝不因 UI 问题放行
+      logWrite("WARN", "dialog", `对话框异常回落: ${t_error.message}`);
     }
   }
 
