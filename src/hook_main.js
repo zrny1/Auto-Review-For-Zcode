@@ -15,7 +15,7 @@
 import { reviewToolUse } from "./reviewer.js";
 import { emitDecision, emitCrash, ACTION_ALLOW, ACTION_ASK, ACTION_DENY } from "./decision.js";
 import { logWrite } from "./common.js";
-import { askUserViaDialog, DIALOG_TIMEOUT_SECONDS } from "./dialog.js";
+import { askUserViaDialog } from "./dialog.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -57,21 +57,27 @@ async function main() {
   const t_decision = await reviewToolUse(t_input);
 
   // ask 决策改为插件自有审批框：客户端同向叠加路径不渲染 hook 文本且无法操纵其 UI，
-  // 由用户在本对话框中直接裁决——允许→hook allow（客户端自动放行）、拒绝→hook deny（阻断）、
-  // 超时/失败→保持 ask（回落客户端原生框，优雅退化）
+  // 由用户在本对话框中直接裁决——允许→hook allow（客户端自动放行）、拒绝→hook deny（阻断）；
+  // 对话框无超时，直到用户决策（关闭窗口按拒绝）；仅基础设施故障回落客户端原生框。
+  // 远程模式（手机控制主机）下本机对话框用户看不到：当前客户端未向 hook 提供任何远程
+  // 会话标记（已核查 hook 输入/数据表/querySource 枚举），预留信号检测——输入一旦携带
+  // querySource/remote 字样即自动跳过对话框走客户端原生审批（远程可达）
+  const t_remote_hint = String((t_input && (t_input.querySource || t_input.source)) || "");
+  const t_remote_active = /remote|web/i.test(t_remote_hint);
   if (t_decision.action === ACTION_ASK && !process.env.AUTO_REVIEW_DISABLE_DIALOG) {
     try {
       const t_settings = loadSettings();
-      if (t_settings.dialog_on_ask !== false) {
+      if (t_settings.dialog_on_ask === false || t_remote_active) {
+        if (t_remote_active) {
+          logWrite("INFO", "dialog", "检测到远程会话标记，跳过对话框走客户端审批");
+        }
+        // 保持 ask：由客户端原生审批（本地=客户端框；远程=手机端请求）
+      } else {
         const t_command = t_input && t_input.tool_input && typeof t_input.tool_input.command === "string"
           ? t_input.tool_input.command
           : "";
         const t_body = `【待审查命令】\n${t_command || "(未知)"}\n\n${t_decision.reason}`;
-        const t_choice = askUserViaDialog(
-          "[auto-review] 人工审查",
-          t_body,
-          DIALOG_TIMEOUT_SECONDS,
-        );
+        const t_choice = askUserViaDialog("[auto-review] 人工审查", t_body);
         if (t_choice === "allow") {
           logWrite("INFO", "dialog", `用户允许: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
           t_decision.action = ACTION_ALLOW;
@@ -83,7 +89,7 @@ async function main() {
           t_decision.reason = `[auto-review] 用户在审查对话框中拒绝了该操作。\n${t_decision.reason}`;
           delete t_decision.additionalContext;
         } else {
-          logWrite("INFO", "dialog", `对话框超时/失败，回落客户端审批: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
+          logWrite("WARN", "dialog", "对话框基础设施故障，回落客户端审批");
         }
       }
     } catch (t_error) {

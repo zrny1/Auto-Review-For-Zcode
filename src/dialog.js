@@ -15,15 +15,17 @@
 
 import { spawnSync } from "node:child_process";
 
-// 对话框倒计时秒数：须与 LLM 超时(默认30s)之和小于 hook 总预算 60s
-const DIALOG_TIMEOUT_SECONDS = 25;
+// 对话框无限等待用户决策（用户要求：不自动消失、不走默认审批）；
+// 24 小时是 spawnSync 的绝对安全上限，防止 PowerShell 进程本身僵死拖死 hook
+const DIALOG_HARD_LIMIT_MS = 24 * 3600 * 1000;
 
-// PowerShell 脚本退出码约定：0=允许 1=拒绝 2=超时/关闭
+// PowerShell 脚本退出码约定：0=允许 1=拒绝（含直接关闭窗口）
 const EXIT_ALLOW = 0;
 const EXIT_DENY = 1;
 
 // WinForms 对话框脚本：动态文本经环境变量传入（AR_TITLE/AR_BODY），规避引号转义；
-// 回车默认触发"拒绝"（防误触允许），允许必须显式点击
+// 回车默认触发"拒绝"（防误触允许），允许必须显式点击；
+// 无倒计时——直接关闭窗口按拒绝处理，绝不静默回落默认审批
 const DIALOG_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "Add-Type -AssemblyName System.Windows.Forms",
@@ -46,8 +48,9 @@ const DIALOG_PS_SCRIPT = [
   "$panel.Height=56",
   "$lbl=New-Object System.Windows.Forms.Label",
   "$lbl.Dock='Left'",
-  "$lbl.Width=280",
+  "$lbl.Width=330",
   "$lbl.TextAlign='MiddleLeft'",
+  "$lbl.Text='等待你的决策（本框不自动关闭，关闭窗口按拒绝处理）'",
   "$btnDeny=New-Object System.Windows.Forms.Button",
   "$btnDeny.Text='拒绝'",
   "$btnDeny.Dock='Right'",
@@ -59,48 +62,41 @@ const DIALOG_PS_SCRIPT = [
   "$panel.Controls.AddRange(@($lbl,$btnDeny,$btnAllow))",
   "$f.Controls.Add($body)",
   "$f.Controls.Add($panel)",
-  "$script:left=[int]$env:AR_TIMEOUT",
-  "$timer=New-Object System.Windows.Forms.Timer",
-  "$timer.Interval=1000",
-  "$timer.Add_Tick({$script:left--;$lbl.Text=\"[$script:left 秒后转默认审批] \";if($script:left -le 0){$f.Tag='timeout';$f.Close()}})",
-  "$f.Tag='timeout'",
+  "$f.Tag='deny'",
   "$btnAllow.Add_Click({$f.Tag='allow';$f.Close()})",
   "$btnDeny.Add_Click({$f.Tag='deny';$f.Close()})",
   "$f.AcceptButton=$btnDeny",
-  "$f.Add_Shown({$timer.Start();$lbl.Text=\"[$script:left 秒后转默认审批] \"})",
   "[void]$f.ShowDialog()",
-  "switch($f.Tag){'allow'{exit 0}'deny'{exit 1}default{exit 2}}",
+  "switch($f.Tag){'allow'{exit 0}default{exit 1}}",
 ].join("; ");
 
 /**
- * 函数功能: 弹出人工审查对话框并等待用户操作（阻塞，受倒计时约束）
+ * 函数功能: 弹出人工审查对话框并阻塞等待用户操作（无超时，直到用户决策）
  * @param {string} title - 对话框标题
  * @param {string} body - 正文全文（命令 + 审查分析，多行）
- * @param {number} timeout_seconds - 倒计时秒数，超时按 timeout 处理
- * @returns {"allow"|"deny"|"timeout"} 用户选择；任何异常一律返回 timeout（回落客户端框）
+ * @returns {"allow"|"deny"|"timeout"} 用户选择；仅基础设施故障（非 Windows/启动失败）返回 timeout
  */
-function askUserViaDialog(title, body, timeout_seconds) {
+function askUserViaDialog(title, body) {
   if (process.platform !== "win32") {
     return "timeout";
   }
-  const t_seconds = Math.max(5, Math.min(40, Number(timeout_seconds) || DIALOG_TIMEOUT_SECONDS));
   try {
     const t_result = spawnSync(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", DIALOG_PS_SCRIPT],
       {
-        env: { ...process.env, AR_TITLE: title, AR_BODY: body, AR_TIMEOUT: String(t_seconds) },
-        timeout: (t_seconds + 15) * 1000,
+        env: { ...process.env, AR_TITLE: title, AR_BODY: body },
+        timeout: DIALOG_HARD_LIMIT_MS,
         windowsHide: true,
       },
     );
-    // status 为 null 表示被强杀（超时上限），同样按 timeout 回落
     if (t_result.status === EXIT_ALLOW) {
       return "allow";
     }
     if (t_result.status === EXIT_DENY) {
       return "deny";
     }
+    // status=null 表示进程被外层强杀或异常退出，按基础设施故障回落
     return "timeout";
   } catch {
     // 对话框通道整体不可用时回落客户端原生审批，绝不因 UI 故障放行
@@ -110,5 +106,4 @@ function askUserViaDialog(title, body, timeout_seconds) {
 
 export {
   askUserViaDialog,
-  DIALOG_TIMEOUT_SECONDS,
 };

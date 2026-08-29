@@ -8,7 +8,7 @@
             "type": "process",
             "command": "node",
             "args": ["${ZCODE_PLUGIN_ROOT}/src/hook_main.js"],
-            "timeoutMs": 60000,
+            "timeoutMs": 3600000,
             "statusMessage": "安全子agent审查中"
           }
         ]
