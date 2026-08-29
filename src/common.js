@@ -92,7 +92,8 @@ function logWrite(level, moduleName, message) {
 function readJsonFile(file_path, fallback, moduleName) {
   try {
     const t_raw = fs.readFileSync(file_path, "utf8");
-    return JSON.parse(t_raw);
+    // 剥 UTF-8 BOM：GUI 侧 PowerShell Set-Content -Encoding UTF8 恒写 BOM，不剥会导致 JSON.parse 失败静默回落默认值
+    return JSON.parse(t_raw.replace(/^\uFEFF/, ""));
   } catch (t_error) {
     if (t_error.code !== "ENOENT" && moduleName) {
       logWrite("WARN", moduleName, `读取 ${path.basename(file_path)} 失败: ${t_error.message}，使用回落值`);

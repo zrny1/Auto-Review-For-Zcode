@@ -12,13 +12,11 @@ import { fileURLToPath } from "node:url";
 
 const t_root = path.resolve(path.dirname(fileURLToPath(new URL(import.meta.url))), "..");
 
-// 长模式优先；作者名 hh-zyb 不受影响
+// 用户目录优先替换为 ~；其余 Windows 绝对路径统一替换为占位符
 const g_rules = [
-  [/D:\\Demo\\DemoSuperVisionForZcode|D:\/Demo\/DemoSuperVisionForZcode/g, "<项目根目录>"],
-  [/D:\\Demo\\test_demo|D:\/Demo\/test_demo/g, "<项目外测试目录>"],
-  [/D:\\Demo(?![\w/\\])|D:\/Demo(?![\w/\\])/g, "<项目父目录>"],
-  [/C:\\Users\\zyb|C:\/Users\/zyb/g, "~"],
-  [/本机 XX 订阅套餐 \/ anthropic 协议/g, "本机启用的 provider（anthropic 协议）"],
+  [/\b[A-Za-z]:\\Users\\[^\\"'`\s]+|\b[A-Za-z]:\/Users\/[^"'`\s]+/g, "~"],
+  [/\b[A-Za-z]:\\[^\\"'`\s]+(?:\\[^\\"'`\s]+)*\b|\b[A-Za-z]:\/[^"'`\s]+(?:\/[^"'`\s]+)*\b/g, "<绝对路径>"],
+  [/本机[^\n]*?anthropic 协议/g, "本机启用的 provider（anthropic 协议）"],
 ];
 
 const g_files = [];

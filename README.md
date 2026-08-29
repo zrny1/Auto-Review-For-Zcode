@@ -51,6 +51,7 @@
 
 ```bash
 node --test scripts/unit_tests.test.js   # 单元测试（19 项）
+node --test scripts/scenario_tests.test.js  # 八场景固定测试（8 场景 + 2 锚定，离线）
 node scripts/smoke_test.js               # 端到端冒烟（不触网，14 项断言组）
 node scripts/validate_ps.js              # GUI 的 PowerShell 脚本语法校验
 node scripts/llm_smoke.js                # 真实 LLM 链路（2 次真实调用）

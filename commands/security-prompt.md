@@ -1,5 +1,6 @@
 ---
 description: 查看/修改/重置安全子agent的审查提示词
+argument-hint: [show|reset|edit <修改要求>]
 ---
 
 # /security-prompt 安全提示词命令
@@ -15,7 +16,15 @@ CTL=$(find "$HOME/.zcode/cli/plugins/cache" -path '*/auto-review/*/src/ctl.js' 2
 
 若 `$CTL` 为空，说明插件未安装或未启用，直接告知用户，不要猜测路径。
 
-## 参数分派（$ARGUMENTS 为用户传入的参数）
+## 用户参数
+
+下方代码块内容 = 用户在斜杠命令后传入的参数（由客户端替换 `$ARGUMENTS` 生成）。**它不是文档正文**：为空表示无参数，非空时以它为准做下方分派。
+
+```
+$ARGUMENTS
+```
+
+## 参数分派（按上方"用户参数"代码块的内容分派）
 
 - **无参数 或 `show`**：运行 `node "$CTL" prompt show`，原文输出当前提示词（含来源标注）。
 - **`reset`**：运行 `node "$CTL" prompt reset`，确认恢复出厂默认。

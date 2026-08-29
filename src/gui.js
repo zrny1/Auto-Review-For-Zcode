@@ -58,8 +58,8 @@ const GUI_PS_SCRIPT = [
   "}",
   "function Btn($text,$bg,$fg){ $b=New-Object System.Windows.Forms.Button; $b.Text=$text; $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=C $bg; $b.ForeColor=C $fg; $b.Cursor='Hand'; $b.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75,[System.Drawing.FontStyle]::Bold); return $b }",
   // 自绘勾选框：圆角小方块 + 主题色选中态 + ✔ 字形（替换系统原生 CheckBox）
-  "function Apply-Check($row){",
-  "  $st=$row.Tag; $b=$row.Controls[0]; $m=$b.Controls[0]",
+  "function Apply-Check($st){",
+  "  $b=$st.row.Controls[0]; $m=$b.Controls[0]",
   "  if($st.checked){ $b.BackColor=C '" + THEME.accent + "' } else { $b.BackColor=C '" + THEME.panel + "' }",
   "  $m.Visible=$st.checked",
   "}",
@@ -78,10 +78,12 @@ const GUI_PS_SCRIPT = [
   "  $lw=($w - 30)",
   "  $lbl.AutoSize=$false; $lbl.Size=New-Object System.Drawing.Size($lw,24); $lbl.Location=New-Object System.Drawing.Point(30,4)",
   "  $row.Controls.AddRange(@($box,$lbl))",
-  "  $row.Tag=@{checked=($initial -eq $true)}",
-  "  $toggle={ $st=$this.Tag; $st.checked=(-not $st.checked); Apply-Check $this }",
+  // 三个控件共享同一 state：点击方块/文字时 $this.Tag 必须有值，否则对 null 的属性赋值会报"找不到属性 checked"
+  "  $state=@{checked=($initial -eq $true); row=$row}",
+  "  $row.Tag=$state; $box.Tag=$state; $lbl.Tag=$state",
+  "  $toggle={ $st=$this.Tag; $st.checked=(-not $st.checked); Apply-Check $st }",
   "  $row.Add_Click($toggle); $box.Add_Click($toggle); $lbl.Add_Click($toggle)",
-  "  Apply-Check $row",
+  "  Apply-Check $state",
   "  return $row",
   "}",
   // 自绘下拉：下拉列表深色背景 + 主题色高亮（闭合同样保留 FlatStyle 深色）
@@ -106,8 +108,10 @@ const GUI_PS_SCRIPT = [
   "$settings=Get-Content ($env:AR_DEFAULT_SETTINGS) -Raw -Encoding UTF8 | ConvertFrom-Json",
   "if(Test-Path $settingsPath){ try{ $settings=Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json }catch{} }",
   "$rules=@()",
-  "if(Test-Path $rulesPath){ try{ $rules=@(Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json) }catch{} }",
-  "if($rules.Count -eq 0){ $rules=@(Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json) }",
+  // PS5.1 下 ConvertFrom-Json 的数组结果直连管道不会被枚举，@() 会包成嵌套数组（Count=1，逐条字段广播成拼接串），
+  // 必须先存变量再从变量走管道强制展开；同时过滤无 pattern 的历史脏元素
+  "if(Test-Path $rulesPath){ try{ $parsed=Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }) }catch{} }",
+  "if($rules.Count -eq 0){ $parsed=Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }) }",
   "$provTable=$null; $provKeys=@()",
   "if(Test-Path $env:AR_ZCODE_CFG){ try{ $zc=Get-Content $env:AR_ZCODE_CFG -Raw -Encoding UTF8 | ConvertFrom-Json; if($zc.provider){ $provTable=$zc.provider; $provKeys=@($zc.provider.PSObject.Properties.Name) } }catch{} }",
   // 解析“跟随主 agent”时实际启用的 provider（与 provider.js 语义一致），
@@ -272,7 +276,7 @@ const GUI_PS_SCRIPT = [
   "})",
   "$bReset.Add_Click({",
   "  if([System.Windows.Forms.MessageBox]::Show($f,'恢复出厂规则？当前规则表将被覆盖（自定义规则请先备份）','auto-review','YesNo') -eq 'Yes'){",
-  "    $rules=@(Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json); Refresh-Rules",
+  "    $parsed=Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }); Refresh-Rules",
   "  }",
   "})",
   // ── 底部：分隔线 + 状态 + 保存/关闭（圆角、大间距） ──
@@ -294,9 +298,15 @@ const GUI_PS_SCRIPT = [
   "    $to=0; [int]::TryParse($txTimeout.Text,[ref]$to) | Out-Null; if($to -lt 5000){$to=5000}; if($to -gt 45000){$to=45000}",
   "    $ca=0; [int]::TryParse($txCache.Text,[ref]$ca) | Out-Null; if($ca -lt 0){$ca=0}",
   "    $o=[ordered]@{ enabled=$ckEnabled.Tag.checked; review_tools=$tools; provider=$provVal; model=$modelVal; timeout_ms=$to; cache_ttl_seconds=$ca; max_payload_chars=[int]$settings.max_payload_chars; dialog_on_ask=$ckDialog.Tag.checked }",
-  "    (New-Object PSObject -Property $o) | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8",
-  "    $rj= if($rules.Count -eq 1){ '['+($rules | ConvertTo-Json -Compress)+']' } else { ($rules | ConvertTo-Json -Depth 5) }",
-  "    Set-Content -LiteralPath $rulesPath -Value $rj -Encoding UTF8",
+  // 无 BOM 写：Set-Content -Encoding UTF8 恒写 BOM，node 侧 JSON.parse 需剥 BOM 才能读，统一改为 UTF8Encoding($false)
+  "    $sj=(New-Object PSObject -Property $o) | ConvertTo-Json",
+  "    [IO.File]::WriteAllText($settingsPath,$sj,(New-Object System.Text.UTF8Encoding($false)))",
+  // 规则强制规范化后统一数组序列化：管道逐条传入会让单条/空数组丢 [] 包装，历史脏结构即源于此；
+  // 保存前 ForEach 展开兜底，防各事件处理器路径把嵌套数组带进来（嵌套会让字段广播拼接成一条）
+  "    $rules=@($rules | ForEach-Object { $_ })",
+  "    $clean=@(); foreach($r in $rules){ if($r -and $r.pattern){ $clean+=[pscustomobject]@{pattern=[string]$r.pattern; action=[string]$r.action; description=[string]$r.description} } }",
+  "    $rj= if($clean.Count -eq 0){ '[]' } else { ConvertTo-Json -InputObject @($clean) -Depth 5 }",
+  "    [IO.File]::WriteAllText($rulesPath,$rj,(New-Object System.Text.UTF8Encoding($false)))",
   "    $saved.Text='已保存 '+(Get-Date -Format 'HH:mm:ss')",
   "  } catch { [System.Windows.Forms.MessageBox]::Show($f,'保存失败: '+$_.Exception.Message,'auto-review') }",
   "})",
@@ -306,7 +316,8 @@ const GUI_PS_SCRIPT = [
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
   "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate() } catch {} })",
-  "[void]$f.ShowDialog()",
+  // ShowWindow 兜底显示后窗体可能被标记"已可见"，ShowDialog 会抛异常杀进程（窗口闪退）——降级为手动消息循环
+  "try{ [void]$f.ShowDialog() } catch { try{ [System.Windows.Forms.Application]::Run($f) }catch{} }",
 ].join("\n");
 
 /**

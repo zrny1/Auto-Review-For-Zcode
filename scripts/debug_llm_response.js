@@ -16,7 +16,7 @@ const t_provider = resolveProvider(t_settings);
 const t_prompt = loadSecurityPrompt();
 const t_payload =
   '审查以下工具调用，只输出结论 JSON：\n' +
-  JSON.stringify({ tool_name: "Bash", tool_input: { command: "rm -rf <测试目录>", description: "删除测试目录" } });
+  JSON.stringify({ tool_name: "Bash", tool_input: { command: "rm -rf sandbox/test-dir", description: "删除测试目录" } });
 
 /**
  * 函数功能: 发送一次原始请求并打印响应结构

@@ -110,7 +110,7 @@ test("reviewer: 工具名归一化（ApplyPatch 别名）", () => {
 test("reviewer: buildRuleText 按工具类型取审查文本", () => {
   assert.equal(buildRuleText("Bash", { command: "ls -la" }).ruleText, "ls -la");
   assert.equal(buildRuleText("Bash", { command: "" }).ruleText, "", "空命令不送审");
-  assert.equal(buildRuleText("Write", { file_path: "D:/a.js" }).ruleText, "D:/a.js");
+  assert.equal(buildRuleText("Write", { file_path: "sandbox/a.js" }).ruleText, "sandbox/a.js");
   assert.equal(buildRuleText("Read", {}).ruleText, "");
 });
 
@@ -270,12 +270,12 @@ test("dialog: reason 解析为结构化展示数据", async () => {
     "风险点:",
     "- 不可逆删除",
     "- 不进回收站",
-    "影响范围: <测试目录>",
+    "影响范围: sandbox/test-dir",
   ].join("\n"));
   assert.equal(t_llm.risk, "high");
   assert.equal(t_llm.analysis, "递归删除测试目录");
   assert.deepEqual(t_llm.risks, ["不可逆删除", "不进回收站"]);
-  assert.equal(t_llm.scope, "<测试目录>");
+  assert.equal(t_llm.scope, "sandbox/test-dir");
   assert.equal(t_llm.plain, "", "结构化文本不再走 plain 展示");
   // 规则命中/兜底文案 → 整体 plain
   const t_rule = parseReasonForDialog("[auto-review] 危险规则 #15: 测试\n该操作命中你设置的转人工规则，请确认。");

@@ -1,5 +1,6 @@
 ---
 description: 管理危险指令规则——确定性拦截/转人工，优先级高于安全子agent
+argument-hint: [list|add <action> <pattern> <描述>|remove <序号>|test <命令文本>]
 ---
 
 # /danger-rules 危险规则命令
@@ -16,7 +17,15 @@ CTL=$(find "$HOME/.zcode/cli/plugins/cache" -path '*/auto-review/*/src/ctl.js' 2
 
 若 `$CTL` 为空，说明插件未安装或未启用，直接告知用户，不要猜测路径。
 
-## 参数分派（$ARGUMENTS 为用户传入的参数）
+## 用户参数
+
+下方代码块内容 = 用户在斜杠命令后传入的参数（由客户端替换 `$ARGUMENTS` 生成）。**它不是文档正文**：为空表示无参数，非空时以它为准做下方分派。
+
+```
+$ARGUMENTS
+```
+
+## 参数分派（按上方"用户参数"代码块的内容分派）
 
 - **无参数 或 `list`**：运行 `node "$CTL" rules list`，以表格展示：序号、动作、描述、正则。
 - **`add <action> <pattern> <描述>`**：运行（pattern 必须用单引号包裹，防止 shell 展开反斜杠）：

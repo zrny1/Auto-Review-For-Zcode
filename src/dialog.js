@@ -167,7 +167,10 @@ const DIALOG_PS_SCRIPT = [
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
   "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate() } catch {} })",
-  "[void]$f.ShowDialog()",
+  // ShowWindow(SW_SHOW) 兜底强制显示后，WinForms 可能因消息时序把窗体标记为"已可见"，
+  // ShowDialog 对已可见窗体会抛 InvalidOperationException 直接杀进程（表现为窗口闪退）——
+  // 此时窗体已在屏幕上，降级为 Application::Run 手动消息循环，窗口关闭即返回，退出码契约不变
+  "try{ [void]$f.ShowDialog() } catch { try{ [System.Windows.Forms.Application]::Run($f) }catch{} }",
   "switch($f.Tag){'allow'{exit 0}default{exit 1}}",
 ].join("\n");
 

@@ -106,7 +106,7 @@ fs.writeFileSync(path.join(t_data_dir, "settings.json"), JSON.stringify({
 
 // ② 非审查工具（Read 不在 review_tools）→ 不干预
 runHookCase("非审查工具 → 空输出放行", JSON.stringify({
-  tool_name: "Read", tool_input: { file_path: "D:/a.txt" },
+  tool_name: "Read", tool_input: { file_path: "sandbox/a.txt" },
 }), { stdout_json: null });
 
 // ③ 危险命令命中出厂规则 → deny（不经过 LLM）
