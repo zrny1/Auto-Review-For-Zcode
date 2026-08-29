@@ -50,6 +50,7 @@ const { loadSettings, saveSettings, loadDangerRules } = await import("../src/set
 const {
   normalizeToolName,
   buildRuleText,
+  buildAnnotatedInput,
   matchDangerRules,
   matchCompoundRules,
   splitTopLevelCommands,
@@ -260,6 +261,22 @@ test("reviewer: 复合命令逐段审查——任一 deny/ask 生效、全 allow
 
   // 单命令（无分隔符）不进入复合逻辑
   assert.equal(matchCompoundRules("ls"), null);
+});
+
+test("reviewer: buildAnnotatedInput 只注解 description、命令不动、带截断", () => {
+  const t_input = { command: "rm -rf D:/x", description: "原始描述" };
+  const t_annotated = buildAnnotatedInput(t_input, "风险级别 high: 分析文本");
+  assert.equal(t_annotated.command, "rm -rf D:/x", "命令字段不允许被改动");
+  assert.ok(t_annotated.description.startsWith("原始描述"), "原描述保留在前");
+  assert.ok(t_annotated.description.includes("[auto-review 审查分析·决策参考]"));
+  assert.ok(t_annotated.description.includes("风险级别 high"));
+  assert.equal(t_input.description, "原始描述", "原输入对象不被修改");
+  // 无原描述时直接以注解开头
+  const t_bare = buildAnnotatedInput({ command: "ls" }, "分析");
+  assert.ok(t_bare.description.startsWith("[auto-review 审查分析"));
+  // 超长截断保护
+  const t_long = buildAnnotatedInput({ command: "ls" }, "x".repeat(3000));
+  assert.ok(t_long.description.length <= 1500);
 });
 
 test("收尾: 清理临时目录", () => {

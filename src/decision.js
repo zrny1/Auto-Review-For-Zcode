@@ -50,6 +50,9 @@ function emitDecision(decision) {
         // 客户端在"模式已 ask + hook ask"时不渲染 reason（fTr 合并丢弃），
         // additionalContext 是把审查分析送进主 agent 上下文的唯一通道
         ...(decision.additionalContext ? { additionalContext: decision.additionalContext } : {}),
+        // updatedInput 在权限判定前生效（审批框渲染改写后的输入）：
+        // 把分析注入 Bash 的 description（纯展示字段，不影响命令执行），让用户决策时可见
+        ...(decision.updatedInput !== undefined ? { updatedInput: decision.updatedInput } : {}),
       },
     };
   }

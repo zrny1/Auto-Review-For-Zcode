@@ -435,11 +435,43 @@ async function runLlmReview(tool_name, tool_input, settings) {
 }
 
 /**
+ * 函数功能: 构造带审查分析注释的工具输入——只对 Bash 的 description 追加分析文本，
+ *           命令本身一字不改（description 是纯展示字段，不参与执行）
+ * @param {object} tool_input - 原始工具输入
+ * @param {string} reason - 审查分析全文（三段式 reason）
+ * @returns {object} 注入后的新输入对象（原对象不被修改）
+ */
+function buildAnnotatedInput(tool_input, reason) {
+  const t_desc = typeof tool_input.description === "string" ? tool_input.description.trim() : "";
+  const t_annotation = `${t_desc ? t_desc + "\n\n" : ""}[auto-review 审查分析·决策参考]\n${reason}`.slice(0, 1500);
+  return { ...tool_input, description: t_annotation };
+}
+
+/**
  * 函数功能: 决策管线主入口（对 hook_main 暴露的唯一函数，保证不抛异常）
  * @param {object} hook_input - hook stdin 的 JSON（tool_name/tool_input，字段防御式读取）
  * @returns {Promise<{action: string, reason: string, source: string}>} 决策对象
  */
 async function reviewToolUse(hook_input) {
+  const t_decision = await reviewToolUseInner(hook_input);
+  // ask 决策统一附加 updatedInput：把分析注入 Bash 的 description，
+  // 客户端在权限判定前应用改写输入，审批框内即可看到分析（决策时可见，非后置）
+  if (t_decision.action === ACTION_ASK && t_decision.reason && hook_input && typeof hook_input === "object") {
+    const t_input = hook_input.tool_input;
+    const t_name = normalizeToolName(hook_input.tool_name || hook_input.toolName);
+    if (t_name === "Bash" && t_input && typeof t_input === "object") {
+      t_decision.updatedInput = buildAnnotatedInput(t_input, t_decision.reason);
+    }
+  }
+  return t_decision;
+}
+
+/**
+ * 函数功能: 决策管线的内部实现（六层编排与兜底）
+ * @param {object} hook_input - hook stdin 的 JSON
+ * @returns {Promise<{action: string, reason: string, source: string}>} 决策对象
+ */
+async function reviewToolUseInner(hook_input) {
   try {
     const t_settings = loadSettings();
     if (!t_settings.enabled) {
@@ -509,6 +541,7 @@ export {
   reviewToolUse,
   normalizeToolName,
   buildRuleText,
+  buildAnnotatedInput,
   matchDangerRules,
   matchCompoundRules,
   splitTopLevelCommands,
