@@ -10,7 +10,7 @@ description: 查看/修改/重置安全子agent的审查提示词
 ## 定位控制脚本
 
 ```bash
-CTL=$(find "$HOME/.zcode/cli/plugins/cache" -maxdepth 4 -path '*/auto-review/*/src/ctl.js' 2>/dev/null | sort -V | tail -1)
+CTL=$(find "$HOME/.zcode/cli/plugins/cache" -path '*/auto-review/*/src/ctl.js' 2>/dev/null | sort -V | tail -1)
 ```
 
 若 `$CTL` 为空，说明插件未安装或未启用，直接告知用户，不要猜测路径。
