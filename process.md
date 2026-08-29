@@ -1,0 +1,28 @@
+## 本轮需求/背景
+
+上一轮把市场清单放到 `.zcode-plugin/marketplace.json` 后，用户重试仍报
+`Marketplace manifest not found in directory: D:\Demo\DemoSuperVisionForZcode`。
+
+## 预期修改计划
+
+- 计划1：从客户端程序源码确认市场清单的真实探测路径
+- 计划2：按真实探测路径重新放置清单，更新文档
+
+## 实际修改步骤
+
+- 在 `D:\Soft\zcode\zcode\resources\glm\zcode.cjs` 中 grep 报错字符串，定位到市场清单探测函数：
+  ```js
+  function Not(e,t){let r=[...t?[t]:[],JRo,_xe]; for(let n of r){...} return null}
+  // JRo = join(".claude-plugin","marketplace.json")
+  // _xe = "marketplace.json"（根目录）
+  ```
+  即客户端只探测**根目录 `marketplace.json`** 或 **`.claude-plugin/marketplace.json`** 两个路径；
+  `.zcode-plugin/` 目录只用于**插件清单** plugin.json（YRo/QRo/XRo 三兼容名），上轮放错了位置。
+- 参照本机官方市场源 `~/.zcode/cli/plugins/marketplaces/zcode-plugins-official/marketplace.json`（同为根目录命名）确认格式
+- 新增根目录 `marketplace.json`（内容与上轮一致），删除无效的 `.zcode-plugin/marketplace.json`
+- 更新 wiki 快速开始、README 的结构说明与安装描述
+
+## 验证结果
+
+- 静态校验通过：清单位于客户端真实探测路径（根目录 marketplace.json）、名称正则合法、插件名与 plugin.json 一致
+- 实机验证待用户第三次重试（同样选择项目根目录添加市场源）

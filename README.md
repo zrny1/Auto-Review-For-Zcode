@@ -28,13 +28,15 @@
 ## 仓库结构
 
 ```
-├── .zcode-plugin/plugin.json   # 插件清单（hooks + commands）
-├── hooks/hooks.json            # PreToolUse 注册
-├── src/                        # 7 个核心模块（决策管线/provider/输出协议/控制CLI）
-├── commands/                   # 3 个斜杠命令
-├── config/                     # 出厂默认（14 条高危规则 + 审查提示词）
-├── scripts/                    # 单元测试 / 冒烟测试 / 真实 LLM 冒烟
-└── docs/                       # 需求、方案、wiki、开发日志
+DemoSuperVisionForZcode/
+├── marketplace.json             # 市场清单（本地市场源入口，客户端探测根目录此文件）
+├── .zcode-plugin/plugin.json    # 插件清单（hooks + commands）
+├── hooks/hooks.json             # PreToolUse 注册
+├── src/                         # 7 个核心模块（决策管线/provider/输出协议/控制CLI）
+├── commands/                    # 3 个斜杠命令
+├── config/                      # 出厂默认（14 条高危规则 + 审查提示词）
+├── scripts/                     # 单元测试 / 冒烟测试 / 真实 LLM 冒烟
+└── docs/                        # 需求、方案、wiki、开发日志
 ```
 
 ## 测试
