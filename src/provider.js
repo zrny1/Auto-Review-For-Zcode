@@ -34,6 +34,9 @@ class ProviderError extends Error {}
 // LLM 调用失败（网络 / 超时 / HTTP 非 2xx / 响应结构异常）
 class LlmError extends Error {}
 
+// 结论 JSON 很小，但必须给混合推理模型的正文留足额度（thinking 已显式关闭，此为双保险）
+const MAX_OUTPUT_TOKENS = 2048;
+
 /**
  * 函数功能: 从配置对象中选出目标 provider 定义
  * @param {object} zcode_config - ZCode 配置文件解析结果
@@ -149,7 +152,10 @@ async function callLlm(provider_info, system_prompt, user_payload) {
     t_headers["anthropic-version"] = "2023-06-01";
     t_body = {
       model: provider_info.model,
-      max_tokens: 1024,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      // GLM 系为混合推理模型：默认思考会吃掉大量时延与 token 额度，
+      // 实测关闭后 16s→5s 且正文稳定存在（否则长思考可耗尽 max_tokens 导致正文为空）
+      thinking: { type: "disabled" },
       system: system_prompt,
       messages: [{ role: "user", content: user_payload }],
     };
@@ -157,7 +163,7 @@ async function callLlm(provider_info, system_prompt, user_payload) {
     t_headers["authorization"] = `Bearer ${provider_info.apiKey}`;
     t_body = {
       model: provider_info.model,
-      max_tokens: 1024,
+      max_tokens: MAX_OUTPUT_TOKENS,
       messages: [
         { role: "system", content: system_prompt },
         { role: "user", content: user_payload },
