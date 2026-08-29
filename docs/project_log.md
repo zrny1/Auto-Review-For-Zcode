@@ -3,6 +3,14 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## a012812
+
+- 修改性质：bug 修复（安装路径）
+- 背景/需求：上轮清单放 `.zcode-plugin/marketplace.json` 后实机仍报 `Marketplace manifest not found`，推测的探测路径有误。
+- 方案/决策：不再猜测，直接逆向客户端程序（`zcode.cjs` 中 grep 报错字符串定位探测函数 `Not`）：市场清单只探测**根目录 `marketplace.json`** 与 **`.claude-plugin/marketplace.json`** 两路径；`.zcode-plugin/` 仅用于插件清单 plugin.json。据此把清单移到根目录（与本机官方市场源 `~/.zcode/cli/plugins/marketplaces/...` 布局一致），删除放错位置的文件。教训：兼容目录名的适用范围（plugin.json vs marketplace.json）以程序源码为准，不能类推。
+- 影响范围：根目录新增 marketplace.json、删除 .zcode-plugin/marketplace.json、文档三处更新；插件本体零改动。
+- 验证结果：静态校验通过（探测路径正确、名称合法、与 plugin.json 一致）；实机添加待用户重试。
+
 ## 3a3fdef
 
 - 修改性质：bug 修复（构建/安装路径）
