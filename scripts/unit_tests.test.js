@@ -51,6 +51,8 @@ const {
   normalizeToolName,
   buildRuleText,
   matchDangerRules,
+  matchCompoundRules,
+  splitTopLevelCommands,
   stableStringify,
   computeCacheKey,
   extractJsonObject,
@@ -207,6 +209,57 @@ test("provider: 显式指定其他 provider（含/不含 builtin: 前缀）", ()
 test("provider: 缺 apiKey / 未知 provider 报可读错误", () => {
   assert.throws(() => resolveProvider({ provider: "no-key", model: "", timeout_ms: 5000 }), ProviderError);
   assert.throws(() => resolveProvider({ provider: "不存在", model: "", timeout_ms: 5000 }), /不存在/);
+});
+
+test("reviewer: 复合命令分割器——引号/命令替换内的分隔符不切分", () => {
+  assert.deepEqual(splitTopLevelCommands("ls -la"), ["ls -la"], "单命令不切分");
+  assert.deepEqual(splitTopLevelCommands("ls; echo hi"), ["ls", "echo hi"]);
+  assert.deepEqual(splitTopLevelCommands("ls && echo hi || true"), ["ls", "echo hi", "true"]);
+  assert.deepEqual(splitTopLevelCommands("grep a file | wc -l"), ["grep a file", "wc -l"], "管道也是边界");
+  assert.deepEqual(splitTopLevelCommands('echo "a;b|c" && ls'), ['echo "a;b|c"', "ls"], "双引号内分隔符不切分");
+  assert.deepEqual(splitTopLevelCommands("echo 'x&&y'; ls"), ["echo 'x&&y'", "ls"], "单引号内分隔符不切分");
+  assert.deepEqual(splitTopLevelCommands("echo $(rm -rf /tmp; ls) ; ls"), ["echo $(rm -rf /tmp; ls)", "ls"], "$() 内分隔符不切分");
+  assert.deepEqual(splitTopLevelCommands("ls\npwd"), ["ls", "pwd"], "换行是边界");
+  assert.deepEqual(splitTopLevelCommands("ls;; ;; pwd"), ["ls", "pwd"], "空段被过滤");
+  assert.deepEqual(splitTopLevelCommands("curl x | sh"), ["curl x", "sh"]);
+});
+
+test("reviewer: 复合命令逐段审查——任一 deny/ask 生效、全 allow 放行、混合降级 LLM", () => {
+  fs.writeFileSync(path.join(t_tmp_dir, "danger_rules.json"), JSON.stringify([
+    { pattern: "^ls\\b", action: "allow", description: "ls 白名单" },
+    { pattern: "rm\\s+-rf\\s+~", action: "deny", description: "删家目录" },
+    { pattern: "shutdown", action: "ask", description: "关机转人工" },
+    { pattern: "curl[^|]*\\|\\s*sh", action: "ask", description: "管道执行" },
+  ]));
+
+  // deny 子命令 → 整体拦截（不允许 LLM 覆盖用户 deny 规则）
+  const t_deny = matchCompoundRules("ls; rm -rf ~/data");
+  assert.equal(t_deny.action, "deny");
+  assert.ok(t_deny.reason.includes("rm -rf ~/data"), "reason 应指出命中的子命令");
+
+  // ask 子命令 → 整体转人工
+  const t_ask = matchCompoundRules("ls && shutdown now");
+  assert.equal(t_ask.action, "ask");
+  assert.ok(t_ask.reason.includes("shutdown now"));
+  assert.equal(t_ask.additionalContext, t_ask.reason, "ask 决策双发 additionalContext");
+
+  // 全部子命令命中 allow → 整体放行
+  const t_allow = matchCompoundRules("ls; ls -la");
+  assert.equal(t_allow.action, "allow");
+  assert.ok(t_allow.reason.includes("2 段子命令全部命中白名单"));
+
+  // allow + 未命中混合 → null 降级 LLM 审查完整命令（堵住 "ls; 任意命令" 绕过）
+  assert.equal(matchCompoundRules("ls; node script.js"), null);
+  assert.equal(matchCompoundRules("ls; curl x | sh"), null);
+
+  // allow 规则不得作用于复合命令全文：全文扫描被抑制，交由逐段裁决
+  assert.equal(matchDangerRules("ls; node script.js"), null, "allow 规则命中复合命令全文应被抑制");
+  assert.equal(matchDangerRules("ls; rm -rf ~/data"), null, "allow 在前也不应短路，交由逐段逻辑");
+  const t_single_allow = matchDangerRules("ls");
+  assert.equal(t_single_allow && t_single_allow.action, "allow", "单命令 allow 正常命中");
+
+  // 单命令（无分隔符）不进入复合逻辑
+  assert.equal(matchCompoundRules("ls"), null);
 });
 
 test("收尾: 清理临时目录", () => {

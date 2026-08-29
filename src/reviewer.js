@@ -70,26 +70,152 @@ function buildRuleText(tool_name, tool_input) {
  * @returns {object|null} 命中的决策 {action, reason, source}，未命中返回 null
  */
 function matchDangerRules(rule_text) {
-  if (!rule_text) {
+  const t_rule = scanRules(rule_text);
+  if (!t_rule) {
+    return null;
+  }
+  // allow 规则禁止作用于复合命令全文：全文以白名单命令开头不代表其余子命令安全
+  // （防 "ls; rm -rf x" 绕过）。复合命令的放行只能由 matchCompoundRules 逐段确认，
+  // deny/ask 命中全文则维持原判定（拦截/转人工总是保守方向）
+  if (t_rule.action === ACTION_ALLOW && splitTopLevelCommands(rule_text).length > 1) {
+    return null;
+  }
+  const t_desc = `危险规则 #${t_rule.index}: ${t_rule.description}`;
+  const t_action = t_rule.action;
+  let t_reason;
+  if (t_action === ACTION_DENY) {
+    t_reason = `[auto-review] 已拦截（${t_desc}）。如需放行请调整规则: /danger-rules list`;
+  } else if (t_action === ACTION_ALLOW) {
+    t_reason = `[auto-review] 白名单放行（${t_desc}）`;
+  } else {
+    t_reason = `[auto-review] ${t_desc}\n该操作命中你设置的转人工规则，请确认。`;
+  }
+  // ask 的 reason 在客户端"模式已 ask"时不进审批框，同步走 additionalContext 送入主 agent 上下文
+  const t_extra = t_action === ACTION_ASK ? { additionalContext: t_reason } : {};
+  return { action: t_action, reason: t_reason, source: "rule", ...t_extra };
+}
+
+/**
+ * 函数功能: 对单段文本按数组顺序扫描规则，返回首个命中的规则
+ * @param {string} text - 被匹配文本
+ * @returns {object|null} 命中的规则定义（含编译好的 regex/action/description/index）
+ */
+function scanRules(text) {
+  if (!text) {
     return null;
   }
   for (const t_rule of loadDangerRules()) {
-    if (t_rule.regex.test(rule_text)) {
-      const t_desc = `危险规则 #${t_rule.index}: ${t_rule.description}`;
-      const t_action = t_rule.action;
-      let t_reason;
-      if (t_action === ACTION_DENY) {
-        t_reason = `[auto-review] 已拦截（${t_desc}）。如需放行请调整规则: /danger-rules list`;
-      } else if (t_action === ACTION_ALLOW) {
-        t_reason = `[auto-review] 白名单放行（${t_desc}）`;
-      } else {
-        t_reason = `[auto-review] ${t_desc}\n该操作命中你设置的转人工规则，请确认。`;
-      }
-      // ask 的 reason 在客户端"模式已 ask"时不进审批框，同步走 additionalContext 送入主 agent 上下文
-      const t_extra = t_action === ACTION_ASK ? { additionalContext: t_reason } : {};
-      return { action: t_action, reason: t_reason, source: "rule", ...t_extra };
+    if (t_rule.regex.test(text)) {
+      return t_rule;
     }
   }
+  return null;
+}
+
+/**
+ * 函数功能: 顶层命令分割——按 ; && || | 换行 切分复合命令
+ * @param {string} text - 命令全文
+ * @returns {string[]} 非空子命令列表；引号内与 $() / 反引号命令替换内的分隔符不参与切分
+ */
+function splitTopLevelCommands(text) {
+  const t_subs = [];
+  let t_cur = "";
+  let t_single = false;
+  let t_double = false;
+  let t_backtick = false;
+  let t_dollar_depth = 0;
+  for (let t_i = 0; t_i < text.length; t_i++) {
+    const t_ch = text[t_i];
+    // 转义字符连同其后字符原样保留
+    if (t_i > 0 && text[t_i - 1] === "\\" && t_ch !== text[t_i - 1]) {
+      t_cur += t_ch;
+      continue;
+    }
+    if (t_single) {
+      if (t_ch === "'") t_single = false;
+      t_cur += t_ch;
+      continue;
+    }
+    if (t_double) {
+      if (t_ch === '"') t_double = false;
+      t_cur += t_ch;
+      continue;
+    }
+    if (t_backtick) {
+      if (t_ch === "`") t_backtick = false;
+      t_cur += t_ch;
+      continue;
+    }
+    if (t_ch === "'") { t_single = true; t_cur += t_ch; continue; }
+    if (t_ch === '"') { t_double = true; t_cur += t_ch; continue; }
+    if (t_ch === "`") { t_backtick = true; t_cur += t_ch; continue; }
+    if (t_ch === "$" && text[t_i + 1] === "(") {
+      // 一次消费 "$(" 两个字符并把深度置 1，保证闭合 ")" 恰好归零
+      t_dollar_depth = 1;
+      t_cur += "$(";
+      t_i++;
+      continue;
+    }
+    if (t_dollar_depth > 0) {
+      if (t_ch === "(") t_dollar_depth++;
+      if (t_ch === ")") t_dollar_depth--;
+      t_cur += t_ch;
+      continue;
+    }
+    if (t_ch === ";" || t_ch === "\n" || t_ch === "|") {
+      t_subs.push(t_cur);
+      t_cur = "";
+      continue;
+    }
+    if (t_ch === "&") {
+      // && 与单个 &（后台执行）均为命令边界
+      t_subs.push(t_cur);
+      t_cur = "";
+      if (text[t_i + 1] === "&") t_i++;
+      continue;
+    }
+    t_cur += t_ch;
+  }
+  t_subs.push(t_cur);
+  return t_subs.map((t_sub) => t_sub.trim()).filter(Boolean);
+}
+
+/**
+ * 函数功能: 复合命令的逐段规则审查——每段独立匹配，任一段命中 deny/ask 即整体生效，
+ *           全部段命中 allow 才整体放行，其余情况返回 null 降级 LLM 审查完整命令。
+ *           防止 allow 规则（如 ^ls\\b）放行 "ls; rm -rf x" 这类以白名单命令开头的复合命令
+ * @param {string} rule_text - 命令全文
+ * @returns {object|null} 命中的决策 {action, reason}，需要 LLM 审查时返回 null
+ */
+function matchCompoundRules(rule_text) {
+  const t_subs = splitTopLevelCommands(rule_text);
+  if (t_subs.length <= 1) {
+    return null;
+  }
+  const t_hits = t_subs.map((t_sub) => ({ sub: t_sub, rule: scanRules(t_sub) }));
+  const t_short = (t_sub) => t_sub.replace(/\s+/g, " ").slice(0, 80);
+
+  const t_deny_hit = t_hits.find((t_item) => t_item.rule && t_item.rule.action === ACTION_DENY);
+  if (t_deny_hit) {
+    return {
+      action: ACTION_DENY,
+      reason: `[auto-review] 已拦截：复合命令的子命令「${t_short(t_deny_hit.sub)}」命中（危险规则 #${t_deny_hit.rule.index}: ${t_deny_hit.rule.description}）。任一子命令命中 deny 即整体拦截。`,
+    };
+  }
+  const t_ask_hit = t_hits.find((t_item) => t_item.rule && t_item.rule.action === ACTION_ASK);
+  if (t_ask_hit) {
+    const t_reason = `[auto-review] 复合命令的子命令「${t_short(t_ask_hit.sub)}」命中（危险规则 #${t_ask_hit.rule.index}: ${t_ask_hit.rule.description}），整条命令转人工确认。`;
+    return { action: ACTION_ASK, reason: t_reason, additionalContext: t_reason };
+  }
+  const t_unmatched = t_hits.filter((t_item) => !t_item.rule);
+  if (t_unmatched.length === 0) {
+    const t_ids = t_hits.map((t_item) => `#${t_item.rule.index}`).join("、");
+    return {
+      action: ACTION_ALLOW,
+      reason: `[auto-review] 白名单放行：${t_hits.length} 段子命令全部命中白名单规则（${t_ids}）。`,
+    };
+  }
+  // 存在未命中白名单的子命令：整体降级 LLM 审查（allow 不能替未覆盖的段作保）
   return null;
 }
 
@@ -338,6 +464,14 @@ async function reviewToolUse(hook_input) {
       logWrite("INFO", "rule", `${t_rule_decision.action} ${t_tool_name}: ${t_short} (${t_rule_decision.reason.split("\n")[0]})`);
       return t_rule_decision;
     }
+    // ③' 复合命令逐段审查：防 allow 白名单放行 "ls; rm -rf x" 这类复合命令
+    if (t_tool_name === "Bash") {
+      const t_compound_decision = matchCompoundRules(t_rule_text);
+      if (t_compound_decision) {
+        logWrite("INFO", "rule", `${t_compound_decision.action} ${t_tool_name}: ${t_short} (复合命令逐段: ${t_compound_decision.reason.split("\n")[0]})`);
+        return { ...t_compound_decision, source: "rule" };
+      }
+    }
     if (!t_rule_text) {
       // 送审文本为空说明输入形态异常，保守转人工
       return { action: ACTION_ASK, reason: "[auto-review] 无法解析工具输入，已转人工审查。", source: "malformed", additionalContext: "[auto-review] 无法解析工具输入，已转人工审查。" };
@@ -376,6 +510,8 @@ export {
   normalizeToolName,
   buildRuleText,
   matchDangerRules,
+  matchCompoundRules,
+  splitTopLevelCommands,
   stableStringify,
   computeCacheKey,
   readCachedDecision,
