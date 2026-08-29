@@ -1,14 +1,13 @@
 /**
- * 模块功能: auto-review 图形配置界面——深色主题设置窗口（与审查对话框同风格）
+ * 模块功能: auto-review 图形配置界面——现代化深色主题设置窗口（与审查对话框同风格）
  * 作者: hh-zyb
  * 创建日期: 2026年08月29日
- * 描述: 覆盖常用配置：总开关 / 审查对话框开关 / 审查工具 / provider 与模型 /
- *       超时与缓存 / 危险规则（添加/删除/测试/恢复出厂）；保存直接写数据目录
- *       JSON（settings.js 加载侧有类型校验与回落，写侧容错）；
- *       由 ctl.js 的 gui 子命令拉起（/auto-review gui）
+ * 描述: 扁平化分区（无 GroupBox 边框盒，节标题 + 留白分隔）；Win11 窗口圆角 + 深色标题栏；
+ *       按钮圆角加大间距；规则列表为圆角卡片（无边框 ListBox 内嵌）；
+ *       覆盖配置：总开关 / 审查对话框开关 / 审查工具 / provider 与模型 / 超时缓存 / 危险规则管理
  * 功能:
  *   - launchSettingsGui: 阻塞式弹出设置窗口，关闭后返回
- * 依赖: node:child_process node:fs node:path ./dialog.js(主题) ./common.js(路径)
+ * 依赖: node:child_process node:fs node:os node:path ./dialog.js(主题) ./common.js(路径)
  * 更新日期: 2026年08月29日
  */
 
@@ -39,7 +38,7 @@ function zcodeConfigCandidates() {
   ];
 }
 
-// 设置窗口 PowerShell 脚本：深色主题、固定窗口、绝对定位；与审查对话框共用配色
+// 设置窗口 PowerShell 脚本：现代化扁平布局，与审查对话框共用配色与圆角方案
 const GUI_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "Add-Type -AssemblyName System.Windows.Forms",
@@ -49,8 +48,15 @@ const GUI_PS_SCRIPT = [
   "$NL=[char]10",
   "function C($hex){ [System.Drawing.ColorTranslator]::FromHtml($hex) }",
   "function Lbl($text,$hex,$size,$style){ $l=New-Object System.Windows.Forms.Label; $l.Text=$text; $l.ForeColor=C $hex; $l.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',$size,$style); $l.AutoSize=$true; return $l }",
-  "function Box($text,$hex){ $p=New-Object System.Windows.Forms.GroupBox; $p.Text=$text; $p.ForeColor=C $hex; $p.BackColor=C '" + THEME.bg + "'; $p.FlatStyle='Flat'; $p.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9,[System.Drawing.FontStyle]::Bold); return $p }",
-  "function Btn($text,$bg,$fg){ $b=New-Object System.Windows.Forms.Button; $b.Text=$text; $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=C $bg; $b.ForeColor=C $fg; $b.Cursor='Hand'; $b.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9,[System.Drawing.FontStyle]::Bold); return $b }",
+  "function Sec($text){ Lbl $text '" + THEME.accent + "' 9.75 ([System.Drawing.FontStyle]::Bold) }",
+  "function Round($ctrl,$r){",
+  "  $p=New-Object System.Drawing.Drawing2D.GraphicsPath",
+  "  $d=2*$r",
+  "  $p.AddArc(0,0,$d,$d,180,90); $p.AddArc($ctrl.Width-$d,0,$d,$d,270,90); $p.AddArc($ctrl.Width-$d,$ctrl.Height-$d,$d,$d,0,90); $p.AddArc(0,$ctrl.Height-$d,$d,$d,90,90)",
+  "  $p.CloseFigure()",
+  "  $ctrl.Region=New-Object System.Drawing.Region($p)",
+  "}",
+  "function Btn($text,$bg,$fg){ $b=New-Object System.Windows.Forms.Button; $b.Text=$text; $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=C $bg; $b.ForeColor=C $fg; $b.Cursor='Hand'; $b.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75,[System.Drawing.FontStyle]::Bold); return $b }",
   // ── 数据加载 ──
   "$settingsPath=$env:AR_SETTINGS_FILE; $rulesPath=$env:AR_RULES_FILE",
   "$settings=Get-Content ($env:AR_DEFAULT_SETTINGS) -Raw -Encoding UTF8 | ConvertFrom-Json",
@@ -65,55 +71,48 @@ const GUI_PS_SCRIPT = [
   "$f.Text='auto-review 设置'",
   "$f.BackColor=C '" + THEME.bg + "'",
   "$f.StartPosition='CenterScreen'; $f.FormBorderStyle='FixedDialog'; $f.MaximizeBox=$false",
-  // 弹出时保持置顶直到关闭（与审查对话框一致）：曾用"1秒后解除置顶"的定时器方案，
-  // 但 PS 事件处理器不共享局部作用域，Tick 里取不到定时器变量（NULL.Stop()）
-  // 导致未处理异常每秒弹框——已回退为全程置顶的简单方案
   "$f.TopMost=$true",
-  "$f.Size=New-Object System.Drawing.Size(740,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
+  "$f.Size=New-Object System.Drawing.Size(760,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
   "$title=Lbl 'auto-review 设置' '" + THEME.text + "' 14 ([System.Drawing.FontStyle]::Bold)",
-  "$title.Location=New-Object System.Drawing.Point(22,16)",
-  // ── 开关区 ──
-  "$gSw=Box '开关' '" + THEME.accent + "'",
-  "$gSw.Location=New-Object System.Drawing.Point(20,56); $gSw.Size=New-Object System.Drawing.Size(684,78)",
+  "$title.Location=New-Object System.Drawing.Point(26,16)",
+  // ── 开关区（扁平） ──
+  "$s1=Sec '开关'; $s1.Location=New-Object System.Drawing.Point(26,56)",
   "$ckEnabled=New-Object System.Windows.Forms.CheckBox",
   "$ckEnabled.Text='启用自动审查（关闭后 hook 不再干预任何工具调用）'",
   "$ckEnabled.ForeColor=C '" + THEME.text + "'; $ckEnabled.BackColor=C '" + THEME.bg + "'",
-  "$ckEnabled.AutoSize=$true; $ckEnabled.Location=New-Object System.Drawing.Point(14,26)",
+  "$ckEnabled.AutoSize=$true; $ckEnabled.Location=New-Object System.Drawing.Point(26,82)",
   "$ckEnabled.Checked=($settings.enabled -eq $true)",
   "$ckDialog=New-Object System.Windows.Forms.CheckBox",
-  "$ckDialog.Text='ask 决策弹出插件审查对话框（默认关闭：审批走客户端原生流程，原生框不显示审查分析）'",
+  "$ckDialog.Text='ask 决策弹出插件审查对话框（默认关闭：审批走客户端原生流程，不显示分析）'",
   "$ckDialog.ForeColor=C '" + THEME.text + "'; $ckDialog.BackColor=C '" + THEME.bg + "'",
-  "$ckDialog.AutoSize=$true; $ckDialog.Location=New-Object System.Drawing.Point(14,50)",
+  "$ckDialog.AutoSize=$true; $ckDialog.Location=New-Object System.Drawing.Point(26,110)",
   "$ckDialog.Checked=($settings.dialog_on_ask -eq $true)",
-  "$gSw.Controls.AddRange(@($ckEnabled,$ckDialog))",
   // ── 审查范围区 ──
-  "$gTools=Box '审查范围' '" + THEME.accent + "'",
-  "$gTools.Location=New-Object System.Drawing.Point(20,142); $gTools.Size=New-Object System.Drawing.Size(684,66)",
+  "$s2=Sec '审查范围'; $s2.Location=New-Object System.Drawing.Point(26,148)",
   "$toolChecks=@{}",
-  "$tx=14",
+  "$tx=26",
   "foreach($tn in @('Bash','Write','Edit')){",
   "  $c=New-Object System.Windows.Forms.CheckBox",
   "  $c.Text=$tn; $c.ForeColor=C '" + THEME.text + "'; $c.BackColor=C '" + THEME.bg + "'; $c.AutoSize=$true",
-  "  $c.Location=New-Object System.Drawing.Point($tx,28)",
+  "  $c.Location=New-Object System.Drawing.Point($tx,176)",
   "  $c.Checked=($settings.review_tools -contains $tn)",
-  "  $gTools.Controls.Add($c); $toolChecks[$tn]=$c; $tx+=110",
+  "  $f.Controls.Add($c); $toolChecks[$tn]=$c; $tx+=130",
   "}",
   // ── 模型区 ──
-  "$gModel=Box '安全子 agent 模型' '" + THEME.accent + "'",
-  "$gModel.Location=New-Object System.Drawing.Point(20,216); $gModel.Size=New-Object System.Drawing.Size(684,90)",
-  "$l1=Lbl 'Provider' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l1.Location=New-Object System.Drawing.Point(14,30)",
+  "$s3=Sec '安全子 agent 模型'; $s3.Location=New-Object System.Drawing.Point(26,214)",
+  "$l1=Lbl 'Provider' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l1.Location=New-Object System.Drawing.Point(26,246)",
   "$cbProv=New-Object System.Windows.Forms.ComboBox",
-  "$cbProv.DropDownStyle='DropDownList'; $cbProv.BackColor=C '" + THEME.panel + "'; $cbProv.ForeColor=C '" + THEME.text + "'",
-  "$cbProv.Location=New-Object System.Drawing.Point(90,26); $cbProv.Size=New-Object System.Drawing.Size(240,26)",
+  "$cbProv.DropDownStyle='DropDownList'; $cbProv.BackColor=C '" + THEME.panel + "'; $cbProv.ForeColor=C '" + THEME.text + "'; $cbProv.FlatStyle='Flat'",
+  "$cbProv.Location=New-Object System.Drawing.Point(110,242); $cbProv.Size=New-Object System.Drawing.Size(250,28)",
   "[void]$cbProv.Items.Add('（跟随主 agent）')",
   "$provKeyMap=@{}",
   "foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProv.Items.Add($dn); $provKeyMap[$dn]=$k }",
   "$curProv=[string]$settings.provider",
   "if(-not $curProv){ $cbProv.SelectedIndex=0 } else { $dn=$curProv -replace '^builtin:',''; if($cbProv.Items.Contains($dn)){ $cbProv.SelectedItem=$dn } else { $cbProv.SelectedIndex=0 } }",
-  "$l2=Lbl '模型' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l2.Location=New-Object System.Drawing.Point(360,30)",
+  "$l2=Lbl '模型' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l2.Location=New-Object System.Drawing.Point(400,246)",
   "$cbModel=New-Object System.Windows.Forms.ComboBox",
-  "$cbModel.DropDownStyle='DropDownList'; $cbModel.BackColor=C '" + THEME.panel + "'; $cbModel.ForeColor=C '" + THEME.text + "'",
-  "$cbModel.Location=New-Object System.Drawing.Point(400,26); $cbModel.Size=New-Object System.Drawing.Size(250,26)",
+  "$cbModel.DropDownStyle='DropDownList'; $cbModel.BackColor=C '" + THEME.panel + "'; $cbModel.ForeColor=C '" + THEME.text + "'; $cbModel.FlatStyle='Flat'",
+  "$cbModel.Location=New-Object System.Drawing.Point(452,242); $cbModel.Size=New-Object System.Drawing.Size(284,28)",
   "function Fill-Models{",
   "  $cbModel.Items.Clear(); [void]$cbModel.Items.Add('（默认）')",
   "  if($provTable -and $cbProv.SelectedIndex -gt 0){",
@@ -125,63 +124,68 @@ const GUI_PS_SCRIPT = [
   "}",
   "Fill-Models",
   "$cbProv.Add_SelectedIndexChanged({ Fill-Models })",
-  "$l3=Lbl '超时(ms)' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l3.Location=New-Object System.Drawing.Point(14,62)",
+  "$l3=Lbl '超时(ms)' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l3.Location=New-Object System.Drawing.Point(26,286)",
   "$txTimeout=New-Object System.Windows.Forms.TextBox",
   "$txTimeout.BackColor=C '" + THEME.panel + "'; $txTimeout.ForeColor=C '" + THEME.text + "'; $txTimeout.BorderStyle='FixedSingle'",
-  "$txTimeout.Location=New-Object System.Drawing.Point(90,58); $txTimeout.Size=New-Object System.Drawing.Size(100,24)",
+  "$txTimeout.Location=New-Object System.Drawing.Point(110,282); $txTimeout.Size=New-Object System.Drawing.Size(110,26)",
   "$txTimeout.Text=[string]$settings.timeout_ms",
-  "$l4=Lbl '缓存(秒)' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l4.Location=New-Object System.Drawing.Point(220,62)",
+  "$l4=Lbl '缓存(秒)' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l4.Location=New-Object System.Drawing.Point(260,286)",
   "$txCache=New-Object System.Windows.Forms.TextBox",
   "$txCache.BackColor=C '" + THEME.panel + "'; $txCache.ForeColor=C '" + THEME.text + "'; $txCache.BorderStyle='FixedSingle'",
-  "$txCache.Location=New-Object System.Drawing.Point(290,58); $txCache.Size=New-Object System.Drawing.Size(100,24)",
+  "$txCache.Location=New-Object System.Drawing.Point(344,282); $txCache.Size=New-Object System.Drawing.Size(110,26)",
   "$txCache.Text=[string]$settings.cache_ttl_seconds",
-  "$gModel.Controls.AddRange(@($l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache))",
-  // ── 危险规则区 ──
-  "$gRules=Box '危险规则（优先于安全子 agent，不经过 LLM）' '" + THEME.accent + "'",
-  "$gRules.Location=New-Object System.Drawing.Point(20,314); $gRules.Size=New-Object System.Drawing.Size(684,268)",
+  // ── 危险规则区（圆角列表卡片 + 独立按钮列） ──
+  "$s4=Sec '危险规则（优先于安全子 agent，不经过 LLM）'; $s4.Location=New-Object System.Drawing.Point(26,322)",
+  "$listCard=New-Object System.Windows.Forms.Panel",
+  "$listCard.BackColor=C '" + THEME.panel + "'",
+  "$listCard.Location=New-Object System.Drawing.Point(26,348); $listCard.Size=New-Object System.Drawing.Size(466,198)",
+  "Round $listCard 12",
   "$lbRules=New-Object System.Windows.Forms.ListBox",
-  "$lbRules.BackColor=C '" + THEME.panel + "'; $lbRules.ForeColor=C '" + THEME.text + "'; $lbRules.BorderStyle='FixedSingle'",
-  "$lbRules.Location=New-Object System.Drawing.Point(14,28); $lbRules.Size=New-Object System.Drawing.Size(470,200)",
+  "$lbRules.BackColor=C '" + THEME.panel + "'; $lbRules.ForeColor=C '" + THEME.text + "'; $lbRules.BorderStyle='None'",
+  "$lbRules.Location=New-Object System.Drawing.Point(8,8); $lbRules.Size=New-Object System.Drawing.Size(450,182)",
   "$lbRules.Font=New-Object System.Drawing.Font('Consolas',9)",
+  "$lbRules.IntegralHeight=$false",
+  "$listCard.Controls.Add($lbRules)",
   "function Refresh-Rules{",
   "  $lbRules.Items.Clear()",
   "  $i=1",
-  "  foreach($r in $rules){ [void]$lbRules.Items.Add(('#'+$i+' ['+$r.action+'] '+$r.description+'  —  '+$r.pattern)); $i++ }",
+  "  foreach($r in $rules){ [void]$lbRules.Items.Add(('#'+$i+' ['+$r.action+'] '+$r.description+'  -  '+$r.pattern)); $i++ }",
   "}",
   "Refresh-Rules",
-  "$bAdd=Btn '添加规则' '" + THEME.accent + "' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(96,34); $bAdd.Location=New-Object System.Drawing.Point(500,28)",
-  "$bDel=Btn '删除所选' '" + THEME.denyBg + "' '" + THEME.riskHigh + "'; $bDel.Size=New-Object System.Drawing.Size(96,34); $bDel.Location=New-Object System.Drawing.Point(500,70)",
-  "$bTest=Btn '测试命中' '" + THEME.panel + "' '" + THEME.accent + "'; $bTest.Size=New-Object System.Drawing.Size(96,34); $bTest.Location=New-Object System.Drawing.Point(500,112)",
-  "$bReset=Btn '恢复出厂' '" + THEME.panel + "' '" + THEME.textDim + "'; $bReset.Size=New-Object System.Drawing.Size(96,34); $bReset.Location=New-Object System.Drawing.Point(500,154)",
+  "$bAdd=Btn '添加规则' '" + THEME.accent + "' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(184,38); $bAdd.Location=New-Object System.Drawing.Point(516,348)",
+  "$bDel=Btn '删除所选' '" + THEME.denyBg + "' '" + THEME.riskHigh + "'; $bDel.Size=New-Object System.Drawing.Size(184,38); $bDel.Location=New-Object System.Drawing.Point(516,398)",
+  "$bTest=Btn '测试命中' '" + THEME.panel + "' '" + THEME.accent + "'; $bTest.Size=New-Object System.Drawing.Size(184,38); $bTest.Location=New-Object System.Drawing.Point(516,448)",
+  "$bReset=Btn '恢复出厂' '" + THEME.panel + "' '" + THEME.textDim + "'; $bReset.Size=New-Object System.Drawing.Size(184,38); $bReset.Location=New-Object System.Drawing.Point(516,498)",
+  "Round $bAdd 10; Round $bDel 10; Round $bTest 10; Round $bReset 10",
   "$rulesHint=Lbl '动作：deny=拦截 ask=转人工 allow=白名单；正则大小写不敏感' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
-  "$rulesHint.Location=New-Object System.Drawing.Point(14,234)",
-  "$gRules.Controls.AddRange(@($lbRules,$bAdd,$bDel,$bTest,$bReset,$rulesHint))",
+  "$rulesHint.Location=New-Object System.Drawing.Point(26,556)",
   // ── 规则操作逻辑 ──
   "$bAdd.Add_Click({",
   "  $sf=New-Object System.Windows.Forms.Form",
-  "  $sf.Text='添加危险规则'; $sf.BackColor=C '" + THEME.bg + "'; $sf.FormBorderStyle='FixedDialog'; $sf.StartPosition='CenterParent'",
-  "  $sf.Size=New-Object System.Drawing.Size(520,240)",
+  "  $sf.Text='添加危险规则'; $sf.BackColor=C '" + THEME.bg + "'; $sf.FormBorderStyle='FixedDialog'; $sf.StartPosition='CenterParent'; $sf.TopMost=$true",
+  "  $sf.Size=New-Object System.Drawing.Size(540,250)",
   "  $sa=New-Object System.Windows.Forms.ComboBox; $sa.DropDownStyle='DropDownList'",
   "  $sa.Items.AddRange(@('deny','ask','allow')); $sa.SelectedIndex=0",
-  "  $sa.BackColor=C '" + THEME.panel + "'; $sa.ForeColor=C '" + THEME.text + "'",
-  "  $sa.Location=New-Object System.Drawing.Point(90,20); $sa.Size=New-Object System.Drawing.Size(120,26)",
-  "  $la=Lbl '动作' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $la.Location=New-Object System.Drawing.Point(20,24)",
+  "  $sa.BackColor=C '" + THEME.panel + "'; $sa.ForeColor=C '" + THEME.text + "'; $sa.FlatStyle='Flat'",
+  "  $sa.Location=New-Object System.Drawing.Point(100,24); $sa.Size=New-Object System.Drawing.Size(140,28)",
+  "  $la=Lbl '动作' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $la.Location=New-Object System.Drawing.Point(24,28)",
   "  $sp=New-Object System.Windows.Forms.TextBox",
   "  $sp.BackColor=C '" + THEME.panel + "'; $sp.ForeColor=C '" + THEME.text + "'; $sp.BorderStyle='FixedSingle'",
   "  $sp.Font=New-Object System.Drawing.Font('Consolas',9)",
-  "  $sp.Location=New-Object System.Drawing.Point(90,56); $sp.Size=New-Object System.Drawing.Size(400,24)",
-  "  $lp=Lbl '正则' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $lp.Location=New-Object System.Drawing.Point(20,60)",
+  "  $sp.Location=New-Object System.Drawing.Point(100,62); $sp.Size=New-Object System.Drawing.Size(400,26)",
+  "  $lp=Lbl '正则' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $lp.Location=New-Object System.Drawing.Point(24,66)",
   "  $sd=New-Object System.Windows.Forms.TextBox",
   "  $sd.BackColor=C '" + THEME.panel + "'; $sd.ForeColor=C '" + THEME.text + "'; $sd.BorderStyle='FixedSingle'",
-  "  $sd.Location=New-Object System.Drawing.Point(90,92); $sd.Size=New-Object System.Drawing.Size(400,24)",
-  "  $ld=Lbl '描述' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $ld.Location=New-Object System.Drawing.Point(20,96)",
-  "  $ok=Btn '确定' '" + THEME.accent + "' '#FFFFFF'; $ok.Size=New-Object System.Drawing.Size(96,34); $ok.Location=New-Object System.Drawing.Point(300,140)",
-  "  $no=Btn '取消' '" + THEME.panel + "' '" + THEME.textDim + "'; $no.Size=New-Object System.Drawing.Size(96,34); $no.Location=New-Object System.Drawing.Point(404,140)",
+  "  $sd.Location=New-Object System.Drawing.Point(100,100); $sd.Size=New-Object System.Drawing.Size(400,26)",
+  "  $ld=Lbl '描述' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $ld.Location=New-Object System.Drawing.Point(24,104)",
+  "  $ok=Btn '确定' '" + THEME.accent + "' '#FFFFFF'; $ok.Size=New-Object System.Drawing.Size(130,40); $ok.Location=New-Object System.Drawing.Point(320,156)",
+  "  $no=Btn '取消' '" + THEME.panel + "' '" + THEME.textDim + "'; $no.Size=New-Object System.Drawing.Size(130,40); $no.Location=New-Object System.Drawing.Point(180,156)",
+  "  Round $ok 10; Round $no 10",
   "  $sf.Controls.AddRange(@($la,$sa,$lp,$sp,$ld,$sd,$ok,$no))",
   "  $script:added=$false",
   "  $ok.Add_Click({",
-  "    if(-not $sp.Text.Trim()){ [System.Windows.Forms.MessageBox]::Show('正则不能为空','auto-review'); return }",
-  "    try{ [regex]::new($sp.Text,'IgnoreCase,Multiline') | Out-Null }catch{ [System.Windows.Forms.MessageBox]::Show('正则编译失败: '+$_.Exception.Message,'auto-review'); return }",
+  "    if(-not $sp.Text.Trim()){ [System.Windows.Forms.MessageBox]::Show($sf,'正则不能为空','auto-review'); return }",
+  "    try{ [regex]::new($sp.Text,'IgnoreCase,Multiline') | Out-Null }catch{ [System.Windows.Forms.MessageBox]::Show($sf,'正则编译失败: '+$_.Exception.Message,'auto-review'); return }",
   "    $script:added=$true; $sf.Close()",
   "  })",
   "  $no.Add_Click({ $sf.Close() })",
@@ -192,11 +196,11 @@ const GUI_PS_SCRIPT = [
   "  }",
   "})",
   "$bDel.Add_Click({",
-  "  if($lbRules.SelectedIndex -lt 0){ [System.Windows.Forms.MessageBox]::Show('先选中一条规则','auto-review'); return }",
+  "  if($lbRules.SelectedIndex -lt 0){ [System.Windows.Forms.MessageBox]::Show($f,'先选中一条规则','auto-review'); return }",
   "  $idx=$lbRules.SelectedIndex",
-  "  if([System.Windows.Forms.MessageBox]::Show('确定删除规则 '+($idx+1)+' ？','auto-review','YesNo') -eq 'Yes'){",
+  "  if([System.Windows.Forms.MessageBox]::Show($f,'确定删除规则 '+($idx+1)+' ？','auto-review','YesNo') -eq 'Yes'){",
   "    $list=New-Object System.Collections.ArrayList",
-  "  foreach($r in $rules){ [void]$list.Add($r) }",
+  "    foreach($r in $rules){ [void]$list.Add($r) }",
   "    $list.RemoveAt($idx); $rules=@($list); Refresh-Rules",
   "  }",
   "})",
@@ -206,24 +210,25 @@ const GUI_PS_SCRIPT = [
   "    $hits=@(); $i=1",
   "    foreach($r in $rules){ try{ if(([regex]::new($r.pattern,'IgnoreCase,Multiline')).IsMatch($cmd)){ $hits+=('#'+$i+' ['+$r.action+'] '+$r.description) } }catch{}; $i++ }",
   "    $msg= if($hits.Count){ '命中 '+$hits.Count+' 条:'+$NL+($hits -join $NL) } else { '未命中任何规则（将进入安全子 agent 审查）' }",
-  "    [System.Windows.Forms.MessageBox]::Show($msg,'规则命中测试')",
+  "    [System.Windows.Forms.MessageBox]::Show($f,$msg,'规则命中测试')",
   "  }",
   "})",
   "$bReset.Add_Click({",
-  "  if([System.Windows.Forms.MessageBox]::Show('恢复出厂规则？当前规则表将被覆盖（自定义规则请先备份）','auto-review','YesNo') -eq 'Yes'){",
+  "  if([System.Windows.Forms.MessageBox]::Show($f,'恢复出厂规则？当前规则表将被覆盖（自定义规则请先备份）','auto-review','YesNo') -eq 'Yes'){",
   "    $rules=@(Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json); Refresh-Rules",
   "  }",
   "})",
-  // ── 底部：保存/关闭 ──
+  // ── 底部：分隔线 + 状态 + 保存/关闭（圆角、大间距） ──
   "$sep=New-Object System.Windows.Forms.Label",
-  "$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(692,1); $sep.Location=New-Object System.Drawing.Point(20,596)",
+  "$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(708,1); $sep.Location=New-Object System.Drawing.Point(26,590)",
   "$sep.BackColor=C '" + THEME.border + "'",
   "$saved=Lbl '' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
-  "$saved.Location=New-Object System.Drawing.Point(22,616); $saved.AutoSize=$true",
+  "$saved.Location=New-Object System.Drawing.Point(26,618); $saved.AutoSize=$true",
   "$bClose=Btn '关 闭' '" + THEME.panel + "' '" + THEME.textDim + "'",
-  "$bClose.Size=New-Object System.Drawing.Size(110,38); $bClose.Location=New-Object System.Drawing.Point(478,606)",
+  "$bClose.Size=New-Object System.Drawing.Size(150,42); $bClose.Location=New-Object System.Drawing.Point(420,606)",
   "$bSave=Btn '保 存' '" + THEME.accent + "' '#FFFFFF'",
-  "$bSave.Size=New-Object System.Drawing.Size(110,38); $bSave.Location=New-Object System.Drawing.Point(598,606)",
+  "$bSave.Size=New-Object System.Drawing.Size(150,42); $bSave.Location=New-Object System.Drawing.Point(586,606)",
+  "Round $bClose 10; Round $bSave 10",
   "$bSave.Add_Click({",
   "  try{",
   "    $tools=@(); foreach($tn in @('Bash','Write','Edit')){ if($toolChecks[$tn].Checked){ $tools+=$tn } }",
@@ -236,22 +241,22 @@ const GUI_PS_SCRIPT = [
   "    $rj= if($rules.Count -eq 1){ '['+($rules | ConvertTo-Json -Compress)+']' } else { ($rules | ConvertTo-Json -Depth 5) }",
   "    Set-Content -LiteralPath $rulesPath -Value $rj -Encoding UTF8",
   "    $saved.Text='已保存 '+(Get-Date -Format 'HH:mm:ss')",
-  "  } catch { [System.Windows.Forms.MessageBox]::Show('保存失败: '+$_.Exception.Message,'auto-review') }",
+  "  } catch { [System.Windows.Forms.MessageBox]::Show($f,'保存失败: '+$_.Exception.Message,'auto-review') }",
   "})",
   "$bClose.Add_Click({ $f.Close() })",
-  "$f.Controls.AddRange(@($title,$gSw,$gTools,$gModel,$gRules,$sep,$saved,$bClose,$bSave))",
-  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $f.Activate() } catch {} })",
-  // 强制可见：spawnSync 的 windowsHide 会让 STARTUPINFO 携带 SW_HIDE，
-  // ShowDialog 在该链路上不覆盖它（实测窗口建成但 visible=False），故显式 ShowWindow
+  "$f.Controls.AddRange(@($title,$s1,$ckEnabled,$ckDialog,$s2,$s3,$l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache,$s4,$listCard,$bAdd,$bDel,$bTest,$bReset,$rulesHint,$sep,$saved,$bClose,$bSave))",
+  // 强制可见 + 深色标题栏 + Win11 圆角（Shown 整体兜底，绝不让异常逃逸到弹框）
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
+  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate() } catch {} })",
   "[void]$f.ShowDialog()",
 ].join("\n");
 
 /**
  * 函数功能: 拉起图形配置窗口并阻塞至关闭
  * @returns {boolean} 是否成功启动（非 Windows / 启动失败返回 false）
- */function launchSettingsGui() {
+ */
+function launchSettingsGui() {
   if (process.platform !== "win32") {
     return false;
   }
