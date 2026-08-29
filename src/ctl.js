@@ -26,6 +26,7 @@ import {
   writeFileAtomic,
 } from "./common.js";
 import { loadSettings, saveSettings, loadRawDangerRules, loadDangerRules, saveDangerRules } from "./settings.js";
+import { launchSettingsGui } from "./gui.js";
 
 // set 命令允许修改的键及其解析方式；未列出的键一律拒绝，防止写入无效配置
 const SETTABLE_KEYS = {
@@ -271,6 +272,15 @@ function dispatch(argv) {
   const [t_cmd, t_sub, ...t_rest] = argv;
   if (t_cmd === "init") return cmdInit();
   if (t_cmd === "status") return cmdStatus();
+  if (t_cmd === "gui") {
+    // 图形配置界面：阻塞至窗口关闭，随后输出当前状态摘要
+    const t_ok = launchSettingsGui();
+    if (!t_ok) {
+      throw new Error("图形界面启动失败（仅支持 Windows）");
+    }
+    console.log("设置窗口已关闭。当前状态：");
+    return cmdStatus();
+  }
   if (t_cmd === "set") {
     if (!t_sub || t_rest.length < 1) throw new Error("用法: set <key> <value>");
     return cmdSet(t_sub, t_rest.join(" "));

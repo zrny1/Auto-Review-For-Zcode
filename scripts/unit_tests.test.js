@@ -262,6 +262,31 @@ test("reviewer: 复合命令逐段审查——任一 deny/ask 生效、全 allow
   assert.equal(matchCompoundRules("ls"), null);
 });
 
+test("dialog: reason 解析为结构化展示数据", async () => {
+  const { parseReasonForDialog } = await import("../src/dialog.js");
+  // LLM 三段式 → 结构化
+  const t_llm = parseReasonForDialog([
+    "[auto-review] 风险级别 high: 递归删除测试目录",
+    "风险点:",
+    "- 不可逆删除",
+    "- 不进回收站",
+    "影响范围: <测试目录>",
+  ].join("\n"));
+  assert.equal(t_llm.risk, "high");
+  assert.equal(t_llm.analysis, "递归删除测试目录");
+  assert.deepEqual(t_llm.risks, ["不可逆删除", "不进回收站"]);
+  assert.equal(t_llm.scope, "<测试目录>");
+  assert.equal(t_llm.plain, "", "结构化文本不再走 plain 展示");
+  // 规则命中/兜底文案 → 整体 plain
+  const t_rule = parseReasonForDialog("[auto-review] 危险规则 #15: 测试\n该操作命中你设置的转人工规则，请确认。");
+  assert.equal(t_rule.plain.includes("危险规则 #15"), true);
+  assert.deepEqual(t_rule.risks, []);
+  assert.equal(t_rule.scope, null);
+  // 中等风险小写归一
+  const t_mid = parseReasonForDialog("[auto-review] 风险级别 Medium: x\n影响范围: y");
+  assert.equal(t_mid.risk, "medium");
+});
+
 test("收尾: 清理临时目录", () => {
   fs.rmSync(t_tmp_dir, { recursive: true, force: true });
 });

@@ -17,6 +17,7 @@ CTL=$(find "$HOME/.zcode/cli/plugins/cache" -path '*/auto-review/*/src/ctl.js' 2
 ## 参数分派（$ARGUMENTS 为用户传入的参数）
 
 - **无参数 或 `status`**：运行 `node "$CTL" status`，把输出整理成简洁的中文状态汇报（开关、审查哪些工具、provider/model、规则条数、提示词是否自定义），并附一行常用用法提示。
+- **`gui`**：运行 `node "$CTL" gui`——打开**图形配置界面**（深色主题设置窗口）：总开关、审查对话框开关、审查工具勾选、provider/模型下拉、超时缓存、危险规则的添加/删除/测试/恢复出厂，窗口内点击保存即生效。提醒用户这是命令式配置的图形替代。
 - **`on`**：运行 `node "$CTL" set enabled true`。成功后提醒用户两点：
   1. 建议把 ZCode 权限模式保持在自动编辑模式（自动审查在该模式下体验最完整：文件编辑不打扰，命令由安全子agent把关）；
   2. 危险规则优先于安全子agent（`/danger-rules`），可用它设置确定性拦截。

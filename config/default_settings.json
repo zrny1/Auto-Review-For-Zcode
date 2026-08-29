@@ -6,5 +6,5 @@
   "timeout_ms": 30000,
   "cache_ttl_seconds": 3600,
   "max_payload_chars": 8000,
-  "dialog_on_ask": true
+  "dialog_on_ask": false
 }

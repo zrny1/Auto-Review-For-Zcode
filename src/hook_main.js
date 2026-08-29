@@ -76,8 +76,7 @@ async function main() {
         const t_command = t_input && t_input.tool_input && typeof t_input.tool_input.command === "string"
           ? t_input.tool_input.command
           : "";
-        const t_body = `【待审查命令】\n${t_command || "(未知)"}\n\n${t_decision.reason}`;
-        const t_choice = askUserViaDialog("[auto-review] 人工审查", t_body);
+        const t_choice = askUserViaDialog("[auto-review] 人工审查", t_command, t_decision.reason);
         if (t_choice === "allow") {
           logWrite("INFO", "dialog", `用户允许: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
           t_decision.action = ACTION_ALLOW;
