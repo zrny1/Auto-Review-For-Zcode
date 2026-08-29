@@ -65,7 +65,9 @@ const GUI_PS_SCRIPT = [
   "$f.Text='auto-review 设置'",
   "$f.BackColor=C '" + THEME.bg + "'",
   "$f.StartPosition='CenterScreen'; $f.FormBorderStyle='FixedDialog'; $f.MaximizeBox=$false",
-  // 弹出时置顶+聚焦，1 秒后解除置顶（避免淹没在其他窗口后面，又不长期霸占最前）
+  // 弹出时保持置顶直到关闭（与审查对话框一致）：曾用"1秒后解除置顶"的定时器方案，
+  // 但 PS 事件处理器不共享局部作用域，Tick 里取不到定时器变量（NULL.Stop()）
+  // 导致未处理异常每秒弹框——已回退为全程置顶的简单方案
   "$f.TopMost=$true",
   "$f.Size=New-Object System.Drawing.Size(740,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
   "$title=Lbl 'auto-review 设置' '" + THEME.text + "' 14 ([System.Drawing.FontStyle]::Bold)",
@@ -238,7 +240,7 @@ const GUI_PS_SCRIPT = [
   "})",
   "$bClose.Add_Click({ $f.Close() })",
   "$f.Controls.AddRange(@($title,$gSw,$gTools,$gModel,$gRules,$sep,$saved,$bClose,$bSave))",
-  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4) } catch {}; $f.Activate(); $untop=New-Object System.Windows.Forms.Timer; $untop.Interval=1000; $untop.Add_Tick({ $f.TopMost=$false; $untop.Stop() }); $untop.Start() })",
+  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $f.Activate() } catch {} })",
   "[void]$f.ShowDialog()",
 ].join("\n");
 
