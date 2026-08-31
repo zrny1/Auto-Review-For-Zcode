@@ -128,7 +128,7 @@ test("场景1: 安全普通指令——LLM 审查后放行", async () => {
 
 test("场景2: 危险删除指令——LLM 判高风险转审核", async () => {
   writeRules([]);
-  const t_decision = await reviewCommand("rm -rf <测试目录>");
+  const t_decision = await reviewCommand("rm -rf D:/app/demo_dir");
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "llm");
   assert.match(t_decision.reason, /风险级别 high/);
@@ -139,7 +139,7 @@ test("场景2: 危险删除指令——LLM 判高风险转审核", async () => {
 
 test("场景3: 执行删除脚本——LLM 判中风险转审核", async () => {
   writeRules([]);
-  const t_decision = await reviewCommand("bash <测试脚本>");
+  const t_decision = await reviewCommand("bash D:/app/delete_demo.sh");
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "llm");
   assert.match(t_decision.reason, /风险级别 medium/);
@@ -148,7 +148,7 @@ test("场景3: 执行删除脚本——LLM 判中风险转审核", async () => {
 
 test("场景4: deny 规则拦截 ls——本地规则直接拦，不经 LLM", async () => {
   writeRules([LS_RULE("deny")]);
-  const t_decision = await reviewCommand("ls <测试目录>");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir");
   assert.equal(t_decision.action, "deny");
   assert.equal(t_decision.source, "rule");
   assert.match(t_decision.reason, /已拦截（危险规则 #1/);
@@ -157,7 +157,7 @@ test("场景4: deny 规则拦截 ls——本地规则直接拦，不经 LLM", as
 
 test("场景5: ask 规则命中 ls——转人工审查", async () => {
   writeRules([LS_RULE("ask")]);
-  const t_decision = await reviewCommand("ls <测试目录>");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir");
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "rule");
   assert.match(t_decision.reason, /该操作命中你设置的转人工规则/);
@@ -167,7 +167,7 @@ test("场景5: ask 规则命中 ls——转人工审查", async () => {
 
 test("场景6: allow 规则命中 ls——白名单直接放行，跳过 LLM", async () => {
   writeRules([LS_RULE("allow")]);
-  const t_decision = await reviewCommand("ls <测试目录>");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir");
   assert.equal(t_decision.action, "allow");
   assert.equal(t_decision.source, "rule");
   assert.match(t_decision.reason, /白名单放行/);
@@ -176,7 +176,7 @@ test("场景6: allow 规则命中 ls——白名单直接放行，跳过 LLM", a
 
 test("场景7: 复合命令 ls(allow)+node --version(ask)——拆分匹配整条转人工", async () => {
   writeRules([LS_RULE("allow"), NODE_VERSION_RULE("ask")]);
-  const t_decision = await reviewCommand("ls <测试目录> && node --version");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir && node --version");
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "rule");
   assert.match(t_decision.reason, /node --version/);
@@ -186,7 +186,7 @@ test("场景7: 复合命令 ls(allow)+node --version(ask)——拆分匹配整�
 
 test("场景8: 复合命令两段全 allow——白名单整条放行", async () => {
   writeRules([LS_RULE("allow"), NODE_VERSION_RULE("allow")]);
-  const t_decision = await reviewCommand("ls <测试目录> && node --version");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir && node --version");
   assert.equal(t_decision.action, "allow");
   assert.equal(t_decision.source, "rule");
   assert.match(t_decision.reason, /2 段子命令全部命中白名单规则/);
@@ -196,7 +196,7 @@ test("场景8: 复合命令两段全 allow——白名单整条放行", async ()
 test("锚定A: allow 开头的复合命令藏危险段——不允许直接放行，降级 LLM 转审核", async () => {
   // 仅 ls 在白名单：`ls && rm -rf` 的第二段未命中任何规则，allow 不能替它作保
   writeRules([LS_RULE("allow")]);
-  const t_decision = await reviewCommand("ls <测试目录> && rm -rf <测试目录>");
+  const t_decision = await reviewCommand("ls D:/app/demo_dir && rm -rf D:/app/demo_dir");
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "llm");
   assert.equal(g_llm_request_count, 1);

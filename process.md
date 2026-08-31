@@ -27,14 +27,14 @@
 
 ### 实际修改步骤
 
-- mirror 备份到 `<项目同级备份仓库>`（28 提交完整）。
-- `src/provider.js:55` 注释 `builtin:your-provider` → `builtin:your-provider`（工作区 sanitize_docs.mjs 已是通配正则无需改）。
-- 提交工作区后执行 `git filter-repo --replace-text`：四条映射（本机套餐名长句→规范表述、套餐名→XX 订阅套餐、套餐名占位→XX、your-provider→your-provider）。
-- 复扫发现新提交带入了本机 git 配置的真实身份（本机用户名/邮箱）——`git filter-repo --commit-callback` 把全部 29 提交的 author/committer 统一为 `hh-zyb <hh-zyb@local>`，并 `git config --local` 固化仓库级身份防再犯。
+- mirror 备份到项目同级裸仓库（28 提交完整，路径从略）。
+- `src/provider.js:55` 注释示例键中性化（不再引用真实套餐配置键；工作区 sanitize_docs.mjs 已是通配正则无需改）。
+- 提交工作区后执行 `git filter-repo --replace-text`：四条映射（本机套餐名长句→规范表述、套餐名→泛化占位符、示例配置键→中性值）。
+- 复扫发现新提交带入了本机 git 配置的真实身份（用户名/邮箱）——`git filter-repo --commit-callback` 把全部 29 提交的 author/committer 统一为 `hh-zyb <hh-zyb@local>`，并 `git config --local` 固化仓库级身份防再犯。
 
 ### 验证结果
 
-- 全历史 本机用户名/本机邮箱/your-provider/coding plan 零命中（唯一残留为替换后的泛化占位符 XX 订阅套餐）。
+- 全历史个人信息与套餐名模式零命中（唯一残留为替换后的泛化占位符）。
 - 29 提交完整、身份唯一、测试回归全绿。备份保留在 mirror 仓库。
 
 ## 第三轮：审查对话框三按钮 + 会话白名单
