@@ -3,6 +3,18 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 0.2.1 周期（44ceed5 ~ 4dbca22，2026-08-31）
+
+- 修改性质：新功能（对话框三按钮+会话白名单、键盘导航）+ 测试资产（场景固化）+ 仓库治理（历史清洗）
+- 背景/需求：用户要求 ①八条手工验收场景固化为回归测试；②清除 git 历史敏感信息（套餐名等，经全历史扫描定位）；③审批对话框增加「本次会话允许」按钮对齐 ZCode 原生审批窗；④键盘导航（左右键光标/回车/Esc=拒绝）。
+- 方案/决策：
+  - 场景固化：scripts/scenario_tests.test.js 用本地假 provider（openai 协议）离线固化 LLM 层行为，规则层直接断言并以 LLM 请求计数为 0 锚定"规则层不触网"；扩至 12 场景+2 锚定（防 allow 白名单绕过、LLM 幻觉 deny 收敛）；
+  - 历史清洗：git filter-repo --replace-text 四条映射清除套餐名 + --commit-callback 统一 29 提交身份为 hh-zyb（修复清洗中新提交带入本机真实身份的失误）；仓库级 user.name/email 固化防再犯；mirror 备份可回滚；
+  - 会话白名单：session_id 界定对话边界，session_allowlist.json 按会话分组存命令哈希（与缓存键同算法），24h 惰性过期；管线接入点在危险规则层**之后**——deny/ask 持久规则永远压过对话框临时放行；精确匹配整条指令；退出码契约扩展 2=会话允许，hook_main 写白名单失败降级一次性放行；
+  - 键盘导航：Add-Type ARNavForm 重写 ProcessCmdKey 在消息预处理层原生拦截左右键/回车（两次返工：PS 事件委托丢键→$script: 索引自管理仍丢键→消息层根治）；Esc=拒绝走 CancelButton；关键坑：Add-Type 必须带 -ReferencedAssemblies（PS5.1 默认引用集无 WinForms），编译失败被 try/catch 静默吞导致导航全灭——独立编译脚本确诊。
+- 影响范围：src/common|reviewer|dialog|hook_main|ctl、scripts/scenario_tests.test.js、README/使用指南/auto-review 命令文档、project_process 归档 ×2；插件缓存各轮已同步。
+- 验证结果：全量测试 33/33；实机弹窗 choice=session/allow/deny 全路径验证；左右键每按必动、光标初始在「拒 绝」；历史清洗后全历史敏感模式零命中、身份唯一。
+
 ## 0.2.0 周期（c140b2e ~ 6e6dbfb，2026-08-29）
 
 - 修改性质：新功能批次 + bug 修复批次 + 文档治理
