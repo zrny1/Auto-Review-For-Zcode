@@ -3,18 +3,18 @@
  * 作者: hh-zyb
  * 创建日期: 2026年08月29日
  * 描述: 管线顺序固定"先确定性后概率性"：总开关 → 工具过滤 → 危险规则层（不经过 LLM）
- *       → 缓存层 → 安全子 agent（LLM）→ 失败兜底 ask；
+ *       → 会话白名单（本次对话允许过）→ 缓存层 → 安全子 agent（LLM）→ 失败兜底 ask；
  *       任何一层异常只会让决策更保守，不存在"出错导致放行"的路径
  * 功能:
  *   - reviewToolUse: 主入口，输入 hook JSON，输出 {action, reason, source}
- *   - 规则匹配、缓存读写、LLM 载荷构造、输出解析与 reason 拼装
+ *   - 规则匹配、会话白名单、缓存读写、LLM 载荷构造、输出解析与 reason 拼装
  * 依赖: node:crypto ./common.js ./settings.js ./provider.js
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年08月31日
  */
 
 import { createHash } from "node:crypto";
 
-import { CACHE_FILE, logWrite, readJsonFile, writeFileAtomic } from "./common.js";
+import { CACHE_FILE, SESSION_ALLOWLIST_FILE, logWrite, readJsonFile, writeFileAtomic } from "./common.js";
 import { loadSettings, loadDangerRules, loadSecurityPrompt } from "./settings.js";
 import { resolveProvider, callLlm, ProviderError, LlmError } from "./provider.js";
 import { ACTION_PASS, ACTION_ALLOW, ACTION_ASK, ACTION_DENY } from "./decision.js";
@@ -24,6 +24,13 @@ const TOOL_ALIASES = { ApplyPatch: "Write", Task: "Agent" };
 
 // 缓存条目上限：超限时丢弃过期项后按过期时间保留最新的一批，防止缓存文件无限增长
 const MAX_CACHE_ENTRIES = 500;
+
+// 会话白名单的会话块最大年龄：hook 输入没有会话结束信号，按时间惰性过期，
+// 24h 覆盖一次长对话的正常跨度，跨天旧会话自动失效
+const SESSION_MAX_AGE_MS = 24 * 3600 * 1000;
+
+// 无 session_id 输入时的兜底分组键：无法界定对话边界，退化为共享分组（仍受 24h 过期约束）
+const SESSION_FALLBACK_ID = "_default";
 
 // 日志中命令预览长度，避免单行日志过长
 const LOG_PREVIEW_CHARS = 120;
@@ -299,6 +306,100 @@ function writeCachedDecision(key, decision, ttl_seconds) {
 }
 
 /**
+ * 函数功能: 读取会话白名单并惰性清理过期会话块（超龄整块删除并回写）
+ * @returns {object} {session_id: {cache_key: {cmd: string, ts: number}}}
+ */
+function readSessionAllowlist() {
+  const t_table = readJsonFile(SESSION_ALLOWLIST_FILE(), {}, "session");
+  const t_now = Date.now();
+  let t_expired = false;
+  for (const t_sid of Object.keys(t_table)) {
+    const t_block = t_table[t_sid];
+    if (!t_block || typeof t_block !== "object") {
+      delete t_table[t_sid];
+      t_expired = true;
+      continue;
+    }
+    // 块内任一条目的时间戳都代表该会话的最近活跃，取最大值判定整块年龄
+    const t_latest = Math.max(0, ...Object.values(t_block).map((t_e) => Number(t_e && t_e.ts) || 0));
+    if (t_now - t_latest > SESSION_MAX_AGE_MS) {
+      delete t_table[t_sid];
+      t_expired = true;
+    }
+  }
+  if (t_expired) {
+    writeFileAtomic(SESSION_ALLOWLIST_FILE(), JSON.stringify(t_table));
+  }
+  return t_table;
+}
+
+/**
+ * 函数功能: 查询某次工具调用是否已被用户在本次对话中允许过
+ * @param {string} session_id - hook 输入的会话标识，缺失时用兜底分组
+ * @param {string} tool_name - 标准工具名
+ * @param {object} tool_input - 工具调用参数
+ * @returns {boolean} 是否命中白名单
+ */
+function matchSessionAllowlist(session_id, tool_name, tool_input) {
+  const t_table = readSessionAllowlist();
+  const t_block = t_table[String(session_id || "").trim() || SESSION_FALLBACK_ID];
+  if (!t_block) {
+    return false;
+  }
+  return Boolean(t_block[computeCacheKey(tool_name, tool_input)]);
+}
+
+/**
+ * 函数功能: 把用户在对话框点选的"本次对话允许"写入会话白名单
+ * @param {string} session_id - hook 输入的会话标识，缺失时用兜底分组
+ * @param {string} tool_name - 标准工具名
+ * @param {object} tool_input - 工具调用参数
+ * @returns {boolean} 是否写入成功（失败时调用方降级为一次性放行）
+ */
+function addSessionAllowlist(session_id, tool_name, tool_input) {
+  const t_table = readSessionAllowlist();
+  const t_sid = String(session_id || "").trim() || SESSION_FALLBACK_ID;
+  const t_block = t_table[t_sid] || {};
+  t_block[computeCacheKey(tool_name, tool_input)] = {
+    cmd: buildRuleText(normalizeToolName(tool_name), tool_input).preview.slice(0, 200),
+    ts: Date.now(),
+  };
+  t_table[t_sid] = t_block;
+  const t_ok = writeFileAtomic(SESSION_ALLOWLIST_FILE(), JSON.stringify(t_table));
+  if (t_ok) {
+    logWrite("INFO", "session", `会话白名单 +1 (${t_sid.slice(0, 12)}): ${t_table[t_sid][computeCacheKey(tool_name, tool_input)].cmd.replace(/\s+/g, " ").slice(0, LOG_PREVIEW_CHARS)}`);
+  }
+  return t_ok;
+}
+
+/**
+ * 函数功能: 清空会话白名单（供 ctl 命令与用户手动重置）
+ * @returns {boolean} 是否清空成功
+ */
+function clearSessionAllowlist() {
+  return writeFileAtomic(SESSION_ALLOWLIST_FILE(), JSON.stringify({}));
+}
+
+/**
+ * 函数功能: 列出会话白名单条目（供 ctl 展示）
+ * @returns {Array<{session: string, cmd: string, ts: number}>} 条目列表（cmd 已预览截断）
+ */
+function listSessionAllowlist() {
+  const t_table = readSessionAllowlist();
+  const t_items = [];
+  for (const [t_sid, t_block] of Object.entries(t_table)) {
+    for (const t_entry of Object.values(t_block)) {
+      t_items.push({
+        session: t_sid,
+        cmd: String((t_entry && t_entry.cmd) || "").slice(0, 120),
+        ts: Number((t_entry && t_entry.ts) || 0),
+      });
+    }
+  }
+  return t_items.sort((a, b) => b.ts - a.ts);
+}
+
+/**
  * 函数功能: 从模型输出中提取平衡的第一个 JSON 对象文本（容忍围栏与前后杂文）
  * @param {string} text - 模型原始输出
  * @returns {string|null} JSON 对象文本，找不到返回 null
@@ -486,6 +587,14 @@ async function reviewToolUseInner(hook_input) {
       return { action: ACTION_ASK, reason: "[auto-review] 无法解析工具输入，已转人工审查。", source: "malformed", additionalContext: "[auto-review] 无法解析工具输入，已转人工审查。" };
     }
 
+    // ③'' 会话白名单：用户对完全相同的指令点过"本次对话允许"即放行。
+    //     位于规则层之后——deny/ask 等持久规则永远优先于对话框的临时放行，
+    //     防止早先放行过的复合命令绕过之后新增的子命令拦截规则
+    if (matchSessionAllowlist(hook_input && hook_input.session_id, t_tool_name, t_tool_input)) {
+      logWrite("INFO", "session", `allow ${t_tool_name}: ${t_short} (会话白名单)`);
+      return { action: ACTION_ALLOW, reason: "[auto-review] 会话白名单放行：该指令你已在本次对话中允许过。", source: "session" };
+    }
+
     // ④ 缓存层：相同调用短期内复用结论，降低延迟与 token 消耗
     const t_cache_key = computeCacheKey(t_tool_name, t_tool_input);
     const t_cached = readCachedDecision(t_cache_key, t_settings.cache_ttl_seconds);
@@ -520,6 +629,10 @@ export {
   buildRuleText,
   matchDangerRules,
   matchCompoundRules,
+  matchSessionAllowlist,
+  addSessionAllowlist,
+  clearSessionAllowlist,
+  listSessionAllowlist,
   splitTopLevelCommands,
   stableStringify,
   computeCacheKey,

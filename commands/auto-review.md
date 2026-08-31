@@ -1,6 +1,6 @@
 ---
-description: 自动审查插件总控——查看状态、开启/关闭、修改配置
-argument-hint: [status|gui|on|off|set <key> <value>]
+description: 自动审查插件总控——查看状态、开启/关闭、修改配置、会话白名单
+argument-hint: [status|gui|on|off|set <key> <value>|session <list|clear>]
 ---
 
 # /auto-review 总控命令
@@ -31,6 +31,8 @@ $ARGUMENTS
   1. 建议把 ZCode 权限模式保持在自动编辑模式（自动审查在该模式下体验最完整：文件编辑不打扰，命令由安全子agent把关）；
   2. 危险规则优先于安全子agent（`/danger-rules`），可用它设置确定性拦截。
 - **`off`**：运行 `node "$CTL" set enabled false`，确认后说明关闭后 hook 不再干预，恢复内置权限流程。
+- **`session list`**：运行 `node "$CTL" session list`，展示「本次会话允许」仍在生效的指令（含会话短标识、时间、命令预览）。
+- **`session clear`**：运行 `node "$CTL" session clear` 清空会话白名单，说明效果：清空后这些指令会重新走完整审查。
 - **`set <key> <value>`**：运行 `node "$CTL" set <key> <value>`（value 用引号包裹原样传递）。校验失败时把错误原样转述并给出合法取值说明：
   - `enabled`: true/false
   - `review_tools`: 字符串数组，如 `'["Bash"]'` 或 `Bash,Write`

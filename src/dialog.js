@@ -5,12 +5,13 @@
  * 描述: 现代化设计：Win11 DWM 窗口圆角 + 深色标题栏；风险徽章药丸形；命令区为圆角卡片
  *       （无边框 RTB 内嵌圆角 Panel）；扁平分区；按钮圆角加大间距；
  *       滚动条策略：内容自动换行 + 加高展示区，仅在溢出时出现系统滚动条（WinForms 无法重绘原生滚动条）
- *       行为不变：无超时等待用户决策、关窗=拒绝、回车=拒绝、允许需显式点击
+ *       行为：无超时等待用户决策；左右键移动按钮光标（白框）+ 回车点击焦点按钮（初始焦点=拒绝）；
+ *       Esc / 关闭窗口 = 拒绝（2026年08月31日按用户要求调整）
  * 功能:
  *   - parseReasonForDialog: 把 reason 文本解析为结构化展示数据
- *   - askUserViaDialog: 阻塞式弹出 WinForms 对话框，返回 allow/deny/timeout
+ *   - askUserViaDialog: 阻塞式弹出 WinForms 对话框，返回 allow/session/deny/timeout
  * 依赖: node:child_process（PowerShell WinForms，零第三方依赖）
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年08月31日
  */
 
 import { spawnSync } from "node:child_process";
@@ -18,9 +19,10 @@ import { spawnSync } from "node:child_process";
 // 24 小时是 spawnSync 的绝对安全上限，防止 PowerShell 进程本身僵死拖死 hook
 const DIALOG_HARD_LIMIT_MS = 24 * 3600 * 1000;
 
-// PowerShell 脚本退出码约定：0=允许 1=拒绝（含直接关闭窗口）
+// PowerShell 脚本退出码约定：0=允许 1=拒绝（含直接关闭窗口） 2=本次对话允许
 const EXIT_ALLOW = 0;
 const EXIT_DENY = 1;
+const EXIT_SESSION = 2;
 
 // 深色主题配色（与 gui.js 的设置界面保持一致，风格对齐 ZCode 客户端）
 const THEME = {
@@ -34,6 +36,7 @@ const THEME = {
   riskMedium: "#FFA657",
   riskLow: "#4EC9B0",
   denyBg: "#4A2B2E",
+  sessionBg: "#2D8A64",
 };
 
 /**
@@ -68,6 +71,9 @@ const DIALOG_PS_SCRIPT = [
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
   "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);}' } catch {}",
+  // ARNavForm：方向键/回车在消息预处理层（ProcessCmdKey）拦截——先于一切控件处理，
+  // 不经 PowerShell 事件（其委托开销会造成丢键），光标边框与点击全部原生执行
+  "try { Add-Type -TypeDefinition 'using System;using System.Windows.Forms;using System.Drawing;public class ARNavForm:Form{public Button[] NavButtons;public int NavIndex=-1;public void MoveNav(int i){if(NavButtons==null||NavButtons.Length==0){return;}if(i<0){i=0;}if(i>NavButtons.Length-1){i=NavButtons.Length-1;}NavIndex=i;foreach(Button b in NavButtons){b.FlatAppearance.BorderSize=0;}Button nb=NavButtons[i];nb.FlatAppearance.BorderSize=2;nb.FlatAppearance.BorderColor=Color.White;nb.Focus();}protected override bool ProcessCmdKey(ref Message m,Keys k){if(NavButtons!=null){if(k==Keys.Left){MoveNav(NavIndex-1);return true;}if(k==Keys.Right){MoveNav(NavIndex+1);return true;}if(k==Keys.Enter){if(NavIndex>=0){MoveNav(NavIndex);NavButtons[NavIndex].PerformClick();}return true;}}return base.ProcessCmdKey(ref m,k);}}' -ReferencedAssemblies System.dll,System.Windows.Forms.dll,System.Drawing.dll } catch {}",
   "$NL=[char]10",
   "function C($hex){ [System.Drawing.ColorTranslator]::FromHtml($hex) }",
   "function Lbl($text,$hex,$size,$style){ $l=New-Object System.Windows.Forms.Label; $l.Text=$text; $l.ForeColor=C $hex; $l.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',$size,$style); $l.AutoSize=$true; return $l }",
@@ -79,8 +85,8 @@ const DIALOG_PS_SCRIPT = [
   "  $p.CloseFigure()",
   "  $ctrl.Region=New-Object System.Drawing.Region($p)",
   "}",
-  // 窗体：深色 + Win11 原生圆角
-  "$f=New-Object System.Windows.Forms.Form",
+  // 窗体：深色 + Win11 原生圆角；导航类不可用时（Add-Type 失败）退化为普通窗体，鼠标仍可操作
+  "try { $f=New-Object ARNavForm } catch { $f=New-Object System.Windows.Forms.Form }",
   "$f.Text='auto-review 人工审查'",
   "$f.BackColor=C '" + THEME.bg + "'",
   "$f.TopMost=$true",
@@ -112,7 +118,7 @@ const DIALOG_PS_SCRIPT = [
   "$card.Location=New-Object System.Drawing.Point(24,92); $card.Size=New-Object System.Drawing.Size(632,92)",
   "Round $card 12",
   "$cb=New-Object System.Windows.Forms.RichTextBox",
-  "$cb.ReadOnly=$true; $cb.BorderStyle='None'; $cb.ScrollBars='None'; $cb.WordWrap=$true",
+  "$cb.ReadOnly=$true; $cb.BorderStyle='None'; $cb.ScrollBars='None'; $cb.WordWrap=$true; $cb.TabStop=$false",
   "$cb.BackColor=C '" + THEME.panel + "'; $cb.ForeColor=C '" + THEME.text + "'",
   "$cb.Font=New-Object System.Drawing.Font('Consolas',9.75)",
   "$cb.Location=New-Object System.Drawing.Point(6,6); $cb.Size=New-Object System.Drawing.Size(620,80)",
@@ -120,7 +126,7 @@ const DIALOG_PS_SCRIPT = [
   "$card.Controls.Add($cb)",
   // 分析主体（分节着色，自动换行）
   "$b=New-Object System.Windows.Forms.RichTextBox",
-  "$b.ReadOnly=$true; $b.BorderStyle='None'; $b.WordWrap=$true",
+  "$b.ReadOnly=$true; $b.BorderStyle='None'; $b.WordWrap=$true; $b.TabStop=$false",
   "$b.BackColor=C '" + THEME.bg + "'; $b.ForeColor=C '" + THEME.text + "'",
   "$b.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
   "$b.Location=New-Object System.Drawing.Point(26,202); $b.Size=New-Object System.Drawing.Size(628,376)",
@@ -144,34 +150,44 @@ const DIALOG_PS_SCRIPT = [
   "$sep=New-Object System.Windows.Forms.Label",
   "$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(652,1); $sep.Location=New-Object System.Drawing.Point(24,592)",
   "$sep.BackColor=C '" + THEME.border + "'",
-  "$h=Lbl '回车=拒绝 · 关闭窗口=拒绝 · 本框不会自动消失' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
+  "$h=Lbl '关闭窗口=拒绝' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
   "$h.Location=New-Object System.Drawing.Point(26,616)",
   "$bd=New-Object System.Windows.Forms.Button",
   "$bd.Text='拒 绝'; $bd.FlatStyle='Flat'; $bd.FlatAppearance.BorderSize=0",
   "$bd.BackColor=C '" + THEME.denyBg + "'; $bd.ForeColor=C '" + THEME.riskHigh + "'",
   "$bd.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75,[System.Drawing.FontStyle]::Bold)",
-  "$bd.Size=New-Object System.Drawing.Size(130,42); $bd.Location=New-Object System.Drawing.Point(396,606); $bd.Cursor='Hand'",
+  "$bd.Size=New-Object System.Drawing.Size(130,42); $bd.Location=New-Object System.Drawing.Point(246,606); $bd.Cursor='Hand'",
   "Round $bd 10",
+  "$bs=New-Object System.Windows.Forms.Button",
+  "$bs.Text='本次会话允许'; $bs.FlatStyle='Flat'; $bs.FlatAppearance.BorderSize=0",
+  "$bs.BackColor=C '" + THEME.sessionBg + "'; $bs.ForeColor=C '#FFFFFF'",
+  "$bs.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75,[System.Drawing.FontStyle]::Bold)",
+  "$bs.Size=New-Object System.Drawing.Size(130,42); $bs.Location=New-Object System.Drawing.Point(396,606); $bs.Cursor='Hand'",
+  "Round $bs 10",
   "$ba=New-Object System.Windows.Forms.Button",
   "$ba.Text='允许执行'; $ba.FlatStyle='Flat'; $ba.FlatAppearance.BorderSize=0",
   "$ba.BackColor=C '" + THEME.accent + "'; $ba.ForeColor=C '#FFFFFF'",
   "$ba.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75,[System.Drawing.FontStyle]::Bold)",
   "$ba.Size=New-Object System.Drawing.Size(130,42); $ba.Location=New-Object System.Drawing.Point(546,606); $ba.Cursor='Hand'",
   "Round $ba 10",
-  "$f.Controls.AddRange(@($t,$badge,$cl,$card,$b,$sep,$h,$bd,$ba))",
+  "$f.Controls.AddRange(@($t,$badge,$cl,$card,$b,$sep,$h,$bs,$bd,$ba))",
   "$f.Tag='deny'",
   "$ba.Add_Click({$f.Tag='allow';$f.Close()})",
+  "$bs.Add_Click({$f.Tag='session';$f.Close()})",
   "$bd.Add_Click({$f.Tag='deny';$f.Close()})",
-  "$f.AcceptButton=$bd",
+  // 键盘导航：按钮表交给 ARNavForm（ProcessCmdKey 原生处理左右键移动光标/回车点击）；
+  // Esc=拒绝（CancelButton 绑定拒绝按钮）
+  "try { $f.NavButtons=[System.Windows.Forms.Button[]]@($bd,$bs,$ba) } catch {}",
+  "$f.CancelButton=$bd",
   // 强制可见 + 深色标题栏 + Win11 窗口圆角
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
-  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate() } catch {} })",
+  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate(); $f.MoveNav(0) } catch {} })",
   // ShowWindow(SW_SHOW) 兜底强制显示后，WinForms 可能因消息时序把窗体标记为"已可见"，
   // ShowDialog 对已可见窗体会抛 InvalidOperationException 直接杀进程（表现为窗口闪退）——
   // 此时窗体已在屏幕上，降级为 Application::Run 手动消息循环，窗口关闭即返回，退出码契约不变
   "try{ [void]$f.ShowDialog() } catch { try{ [System.Windows.Forms.Application]::Run($f) }catch{} }",
-  "switch($f.Tag){'allow'{exit 0}default{exit 1}}",
+  "switch($f.Tag){'allow'{exit 0}'session'{exit 2}default{exit 1}}",
 ].join("\n");
 
 /**
@@ -179,7 +195,7 @@ const DIALOG_PS_SCRIPT = [
  * @param {string} title - 对话框标题
  * @param {string} command - 待审查命令全文
  * @param {string} reason - 审查分析全文
- * @returns {"allow"|"deny"|"timeout"} 用户选择；仅基础设施故障返回 timeout
+ * @returns {"allow"|"session"|"deny"|"timeout"} 用户选择；session=本次对话允许；仅基础设施故障返回 timeout
  */
 function askUserViaDialog(title, command, reason) {
   if (process.platform !== "win32") {
@@ -207,6 +223,9 @@ function askUserViaDialog(title, command, reason) {
     );
     if (t_result.status === EXIT_ALLOW) {
       return "allow";
+    }
+    if (t_result.status === EXIT_SESSION) {
+      return "session";
     }
     if (t_result.status === EXIT_DENY) {
       return "deny";

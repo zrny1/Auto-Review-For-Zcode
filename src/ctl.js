@@ -1,5 +1,5 @@
 /**
- * 模块功能: 插件控制 CLI——斜杠命令操作插件的唯一入口（init/status/set/rules/prompt）
+ * 模块功能: 插件控制 CLI——斜杠命令操作插件的唯一入口（init/status/set/rules/prompt/session/gui）
  * 作者: hh-zyb
  * 创建日期: 2026年08月29日
  * 描述: 命令文档指导主 agent 调用本脚本完成配置变更，校验逻辑集中在代码而非提示词中，
@@ -9,8 +9,9 @@
  *   - status / set: 运行时配置查看与修改（键与类型校验）
  *   - rules list|add|remove|test: 危险规则表管理
  *   - prompt show|path|reset: 安全提示词查看/定位/恢复默认
- * 依赖: node:fs node:path ./common.js ./settings.js
- * 更新日期: 2026年08月29日
+ *   - session list|clear: 会话白名单（"本次对话允许"）查看与清空
+ * 依赖: node:fs node:path ./common.js ./settings.js ./reviewer.js ./gui.js
+ * 更新日期: 2026年08月31日
  */
 
 import fs from "node:fs";
@@ -26,6 +27,7 @@ import {
   writeFileAtomic,
 } from "./common.js";
 import { loadSettings, saveSettings, loadRawDangerRules, loadDangerRules, saveDangerRules } from "./settings.js";
+import { listSessionAllowlist, clearSessionAllowlist } from "./reviewer.js";
 import { launchSettingsGui } from "./gui.js";
 
 // set 命令允许修改的键及其解析方式；未列出的键一律拒绝，防止写入无效配置
@@ -264,6 +266,33 @@ function cmdPromptReset() {
 }
 
 /**
+ * 函数功能: 列出会话白名单条目（"本次对话允许"的生效中指令）
+ * @returns {void}
+ */
+function cmdSessionList() {
+  const t_items = listSessionAllowlist();
+  if (t_items.length === 0) {
+    console.log("(会话白名单为空：尚无「本次会话允许」的指令，或已超过 24 小时自动过期)");
+    return;
+  }
+  for (const t_item of t_items) {
+    const t_time = new Date(t_item.ts).toLocaleString();
+    console.log(`[${t_time}] (${t_item.session.slice(0, 12)}…) ${t_item.cmd}`);
+  }
+}
+
+/**
+ * 函数功能: 清空会话白名单（后续同指令将重新走完整审查）
+ * @returns {void}
+ */
+function cmdSessionClear() {
+  if (!clearSessionAllowlist()) {
+    throw new Error("清空 session_allowlist.json 失败");
+  }
+  console.log("已清空会话白名单");
+}
+
+/**
  * 函数功能: 子命令分发表
  * @param {string[]} argv - 去掉 node 与脚本路径后的参数列表
  * @returns {void}
@@ -307,7 +336,12 @@ function dispatch(argv) {
     if (t_sub === "reset") return cmdPromptReset();
     throw new Error("子命令: show / path / reset");
   }
-  throw new Error(`未知命令 "${t_cmd || ""}"。可用: init / status / set / rules / prompt`);
+  if (t_cmd === "session") {
+    if (t_sub === "list") return cmdSessionList();
+    if (t_sub === "clear") return cmdSessionClear();
+    throw new Error("子命令: list / clear");
+  }
+  throw new Error(`未知命令 "${t_cmd || ""}"。可用: init / status / set / rules / prompt / session`);
 }
 
 // 入口：错误统一走 stderr + exit 1，成功输出全部在 stdout

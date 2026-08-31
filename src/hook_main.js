@@ -8,11 +8,12 @@
  * 功能:
  *   - stdin 全量读取与容错解析
  *   - 调用审查管线并输出决策
- * 依赖: ./reviewer.js ./decision.js ./common.js
- * 更新日期: 2026年08月29日
+ *   - 对话框三态裁决映射：允许 / 本次对话允许（写会话白名单）/ 拒绝
+ * 依赖: ./reviewer.js ./decision.js ./common.js ./dialog.js ./settings.js
+ * 更新日期: 2026年08月31日
  */
 
-import { reviewToolUse } from "./reviewer.js";
+import { reviewToolUse, addSessionAllowlist } from "./reviewer.js";
 import { emitDecision, emitCrash, ACTION_ALLOW, ACTION_ASK, ACTION_DENY } from "./decision.js";
 import { logWrite } from "./common.js";
 import { askUserViaDialog } from "./dialog.js";
@@ -81,6 +82,16 @@ async function main() {
           logWrite("INFO", "dialog", `用户允许: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
           t_decision.action = ACTION_ALLOW;
           t_decision.reason = `${t_decision.reason}\n(用户已在 auto-review 审查对话框中批准)`;
+          delete t_decision.additionalContext;
+        } else if (t_choice === "session") {
+          // 本次对话允许：写入会话白名单后按 allow 放行；写盘失败降级为一次性放行，
+          // 用户的点击决策本身不能因存储故障被推翻
+          logWrite("INFO", "dialog", `用户允许(本次对话): ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);
+          if (!addSessionAllowlist(t_input && t_input.session_id, t_input && (t_input.tool_name || t_input.toolName), t_input && t_input.tool_input)) {
+            logWrite("WARN", "dialog", "会话白名单写入失败，本次按一次性放行处理");
+          }
+          t_decision.action = ACTION_ALLOW;
+          t_decision.reason = `${t_decision.reason}\n(用户已选择「本次会话允许」：同一指令在本对话内后续不再询问)`;
           delete t_decision.additionalContext;
         } else if (t_choice === "deny") {
           logWrite("INFO", "dialog", `用户拒绝: ${t_command.replace(/\s+/g, " ").slice(0, 80)}`);

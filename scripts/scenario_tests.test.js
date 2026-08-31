@@ -83,7 +83,7 @@ fs.writeFileSync(process.env.AUTO_REVIEW_ZCODE_CONFIG, JSON.stringify({
 
 // 环境就绪后再加载业务模块
 const { loadSettings, saveSettings, saveDangerRules } = await import("../src/settings.js");
-const { reviewToolUse } = await import("../src/reviewer.js");
+const { reviewToolUse, addSessionAllowlist, clearSessionAllowlist } = await import("../src/reviewer.js");
 
 // 运行时配置：开启审查、只审 Bash、显式指向假 provider、禁用缓存保证用例无状态串扰
 const t_settings = loadSettings();
@@ -208,6 +208,63 @@ test("锚定B: LLM 幻觉 deny——收敛为 ask（拦截权只属于用户规�
   assert.equal(t_decision.action, "ask");
   assert.equal(t_decision.source, "llm");
   assert.equal(g_llm_request_count, 1);
+});
+
+// ─── 场景9-12: 会话白名单（对话框第三按钮「本次对话允许」）───
+
+// 带 session_id 的 hook 输入构造（与真实 hook stdin 一致）
+function sessionInput(t_session, t_command) {
+  return { tool_name: "Bash", tool_input: { command: t_command }, session_id: t_session };
+}
+
+/**
+ * 函数功能: 以指定会话执行一次审查并重置 LLM 计数
+ * @param {string} t_session - 会话标识
+ * @param {string} t_command - 被审查命令
+ * @returns {Promise<object>} 决策对象
+ */
+async function reviewSession(t_session, t_command) {
+  g_llm_request_count = 0;
+  return reviewToolUse(sessionInput(t_session, t_command));
+}
+
+test("场景9: 本次对话允许后——同一会话同一指令直接放行，不经 LLM", async () => {
+  writeRules([]);
+  assert.equal(addSessionAllowlist("sess_t1", "Bash", { command: "node D:/app/build.js" }), true);
+  const t_decision = await reviewSession("sess_t1", "node D:/app/build.js");
+  assert.equal(t_decision.action, "allow");
+  assert.equal(t_decision.source, "session");
+  assert.match(t_decision.reason, /会话白名单放行/);
+  assert.equal(g_llm_request_count, 0);
+});
+
+test("场景10: deny 规则优先于会话白名单——持久规则压过临时放行", async () => {
+  writeRules([{ pattern: "^\\s*node\\s+D:/app/build\\.js\\b", action: "deny", description: "测试规则-拦截构建脚本" }]);
+  assert.equal(addSessionAllowlist("sess_t1", "Bash", { command: "node D:/app/build.js" }), true);
+  const t_decision = await reviewSession("sess_t1", "node D:/app/build.js");
+  assert.equal(t_decision.action, "deny");
+  assert.equal(t_decision.source, "rule");
+  assert.equal(g_llm_request_count, 0);
+});
+
+test("场景11: 精确匹配——白名单只对完全相同指令生效，其他指令照常审查", async () => {
+  writeRules([]);
+  addSessionAllowlist("sess_t1", "Bash", { command: "node D:/app/build.js" });
+  const t_decision = await reviewSession("sess_t1", "node D:/app/build.js --prod");
+  assert.equal(t_decision.action, "allow");
+  assert.equal(t_decision.source, "llm");
+  assert.equal(g_llm_request_count, 1);
+});
+
+test("场景12: 会话隔离——另一会话不受已允许指令影响", async () => {
+  writeRules([]);
+  addSessionAllowlist("sess_t1", "Bash", { command: "node D:/app/build.js" });
+  const t_decision = await reviewSession("sess_t2", "node D:/app/build.js");
+  assert.equal(t_decision.action, "allow");
+  assert.equal(t_decision.source, "llm");
+  assert.equal(g_llm_request_count, 1);
+  // 测试收尾清空白名单，避免影响后续用例
+  clearSessionAllowlist();
 });
 
 test.after(() => {

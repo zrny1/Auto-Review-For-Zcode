@@ -9,7 +9,7 @@
  *   - 审查日志（带轮转）写入
  *   - JSON 文件防御式读取与原子写（临时文件 + rename，避免半截文件）
  * 依赖: node:os node:path node:fs node:url
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年08月31日
  */
 
 import os from "node:os";
@@ -34,6 +34,7 @@ const SETTINGS_FILE = () => path.join(g_data_dir, "settings.json");
 const DANGER_RULES_FILE = () => path.join(g_data_dir, "danger_rules.json");
 const SECURITY_PROMPT_FILE = () => path.join(g_data_dir, "security_prompt.md");
 const CACHE_FILE = () => path.join(g_data_dir, "cache.json");
+const SESSION_ALLOWLIST_FILE = () => path.join(g_data_dir, "session_allowlist.json");
 const LOG_FILE = () => path.join(g_data_dir, "review.log");
 
 // 出厂默认配置（只读回落源，位于插件包内）
@@ -130,6 +131,7 @@ export {
   DANGER_RULES_FILE,
   SECURITY_PROMPT_FILE,
   CACHE_FILE,
+  SESSION_ALLOWLIST_FILE,
   LOG_FILE,
   DEFAULT_SETTINGS_FILE,
   DEFAULT_DANGER_RULES_FILE,
