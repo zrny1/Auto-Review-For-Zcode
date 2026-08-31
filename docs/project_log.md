@@ -3,7 +3,7 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
-## 0.2.1 周期（44ceed5 ~ 4dbca22，2026-08-31）
+## 0.2.1 周期（44ceed5 ~ 6b50ce4，2026-08-31）
 
 - 修改性质：新功能（对话框三按钮+会话白名单、键盘导航）+ 测试资产（场景固化）+ 仓库治理（历史清洗）
 - 背景/需求：用户要求 ①八条手工验收场景固化为回归测试；②清除 git 历史敏感信息（套餐名等，经全历史扫描定位）；③审批对话框增加「本次会话允许」按钮对齐 ZCode 原生审批窗；④键盘导航（左右键光标/回车/Esc=拒绝）。
@@ -15,7 +15,7 @@
 - 影响范围：src/common|reviewer|dialog|hook_main|ctl、scripts/scenario_tests.test.js、README/使用指南/auto-review 命令文档、project_process 归档 ×2；插件缓存各轮已同步。
 - 验证结果：全量测试 33/33；实机弹窗 choice=session/allow/deny 全路径验证；左右键每按必动、光标初始在「拒 绝」；历史清洗后全历史敏感模式零命中、身份唯一。
 
-## 0.2.0 周期（c140b2e ~ 6e6dbfb，2026-08-29）
+## 0.2.0 周期（b85e34d ~ a298f68，2026-08-29）
 
 - 修改性质：新功能批次 + bug 修复批次 + 文档治理
 - 背景/需求：实机验证暴露三类问题（GLM thinking 致空响应/超时、客户端审批框同向叠加不渲染 hook 文本、复合命令可被 allow 白名单绕过）；用户追加需求（自有审批对话框、图形配置、现代化美化、隐私清洗）。
@@ -28,7 +28,7 @@
 - 影响范围：新增 dialog.js/gui.js/4 个维护脚本，删除 toast.js；reviewer/provider/hook_main/ctl/命令文档/默认配置更新；hooks 预算 60s→1h。
 - 验证结果：单测 19/19、冒烟 14 项、PS 校验双绿；四轮 8 项实机验证全过（含复合命令两组）；对话框与 GUI 实机验证通过（探测器确认 visible=True）；文档隐私清洗后复扫零残留。
 
-## 8bae62f
+## 59f99cf
 
 - 修改性质：bug 修复（安全加固）+ 审批框显示机制调查
 - 背景/需求：①审查发现 allow 白名单规则（^ls\b）可放行 "ls; rm -rf x" 复合命令——全文扫描以白名单命令开头即整体放行；②用户观察到审批框"有时显示审查分析、有时不显示"（仅 ls 验证时显示）。
@@ -38,7 +38,7 @@
 - 影响范围：src/reviewer.js（matchDangerRules 拆分 + splitTopLevelCommands + matchCompoundRules + 管线接入）、单测 +2 项（18/18）、已同步插件缓存。
 - 验证结果：A `ls; ls -la` 全段 allow → 复合放行；B `ls; rm -rf ...` 混合 → 降级 LLM ask high；C `ls` 单命令正常白名单；allow 复合全文抑制有专项断言。
 
-## c140b2e
+## b85e34d
 
 - 修改性质：bug 修复（LLM 调用层）+ 实机验证完成
 - 背景/需求：实机验证暴露三类失败：Turbo 30s 超时、flash"响应为空"、客户端 hook 10s 判失败（Permission request failed）。用户要求查清原因。
@@ -46,7 +46,7 @@
 - 影响范围：src/provider.js（anthropic 分支）、新增 scripts/debug_llm_response.js 诊断脚本；已同步已安装插件缓存。
 - 验证结果：6 项实机测试全部通过（详见 review.log）——安全命令自动放行（含超时兜底转人工路径）；rm -rf 与删除脚本均 4s 级转人工并展示分析/风险点/影响范围；deny/ask/allow 三种规则动作分别实现秒拦/转人工/白名单直放；规则层决策全部 `[rule]` 来源，LLM 决策全部 `[llm]` 来源。测试后规则表恢复出厂 14 条。
 
-## a012812
+## efc0116
 
 - 修改性质：bug 修复（安装路径）
 - 背景/需求：上轮清单放 `.zcode-plugin/marketplace.json` 后实机仍报 `Marketplace manifest not found`，推测的探测路径有误。
@@ -54,7 +54,7 @@
 - 影响范围：根目录新增 marketplace.json、删除 .zcode-plugin/marketplace.json、文档三处更新；插件本体零改动。
 - 验证结果：静态校验通过（探测路径正确、名称合法、与 plugin.json 一致）；实机添加待用户重试。
 
-## 3a3fdef
+## a6be9d3
 
 - 修改性质：bug 修复（构建/安装路径）
 - 背景/需求：用户添加市场源为项目根目录时报 `Marketplace manifest not found`——本地市场源目录必须含市场清单，项目此前只有插件清单。
@@ -62,7 +62,7 @@
 - 影响范围：新增市场清单 + 安装文档两处更新；插件本体（src/hooks/commands）零改动。
 - 验证结果：清单静态校验通过（名称正则、两清单插件名一致、source 不逃逸插件根）；实机添加待用户重试，备选兼容路径 `.claude-plugin/marketplace.json` 已记录在归档文档。
 
-## e226492
+## 5e25968
 
 - 修改性质：新功能（v0.1 完整实现）
 - 背景/需求：ZCode 四种内置权限模式缺少"中间地带"——全自动裸奔、默认模式打断多。按 docs/project_demand.md 六条需求实现 auto-review 插件：自动编辑基座 + 安全子agent 门卫。
