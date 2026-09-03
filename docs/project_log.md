@@ -3,6 +3,16 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 0.2.2 周期（d0c071a，2026-09-03）
+
+- 修改性质：bug 修复（对话框未显示误拒）+ 新功能（fallback provider）+ 测试/文档
+- 背景/需求：用户报告部分 bash 命令被直接拒绝且完全不弹审查框。实测复现：当天所有 bash 调用（含 pwd/ls）均 0.5s 内被拦，日志恒为 `[fallback] 审查失败转人工: HTTP 429`（BigModel GLM 周额度耗尽）→ `[dialog] 用户拒绝`。根因三层叠加：①LLM 429 使所有命令走转人工；②锁屏/无交互桌面（进程含 LockApp、截图取不到画面）下插件自绘 WinForms 对话框无法显示；③PowerShell 默认 `$f.Tag='deny'` + 末尾 `default{exit 1}`，窗口没弹出时静默 exit 1，被 Node 当成"用户点了拒绝"——"没弹框"误报成"用户拒绝"。
+- 方案/决策：
+  - 对话框"未显示即回落客户端原生审批"：PS 侧两条检测——Shown 事件未触发（窗口从未显示）、OpenInputDesktop 返回空句柄（锁屏/无交互桌面），任一命中用独立退出码 3 退出；Node 侧 `mapDialogExitCode` 把 3 映射为 timeout，hook_main 回落客户端原生审批（保持 ask），绝不把 UI 故障当真人拒绝。退出码契约 0=允许 1=拒绝(含显示后关窗/Esc) 2=本次会话允许 3=未显示/基础设施故障；探测不可用（Add-Type 失败）时按旧行为弹窗，不误伤正常桌面。
+  - fallback provider：`resolveProviderOverride(settings, name, model)` 抽出按名解析（主/fallback 复用）；`runLlmReview` 改为 provider 尝试列表（主→fallback），解析/调用/输出解析任一失败切下一个，全部失败抛汇总错误由上层兜底转人工（绝不带病放行）；配置新增 `fallback_provider`/`fallback_model`，settings 默认/ctl/gui 全链路支持。
+- 影响范围：src/dialog|provider|reviewer|ctl|gui、config/default_settings.json、测试 +4 项、README/使用指南/常见问题；已同步安装插件缓存副本；实机已配 fallback_provider=火山方舟2/deepseek-v4-flash。
+- 验证结果：离线全绿（单测 21/21、场景 16/16 含新增场景13/14、冒烟 14 断言组、PS 双脚本校验）。实机 fallback 生效：主 GLM 429 → `WARN[llm] 主 provider 审查失败，切换下一个` → `使用 火山方舟2 / deepseek-v4-flash` → `allow (fallback provider)`，pwd/tail 放行执行。实机对话框：用户在场可正常弹出并点击（探针实测点"本次会话允许"→ exit 2、Tag=session）；锁屏/未显示路径由退出码 3 回落客户端审批覆盖。插件版本号未 bump（随发布统一）。
+
 ## 0.2.1 周期（44ceed5 ~ 6b50ce4，2026-08-31）
 
 - 修改性质：新功能（对话框三按钮+会话白名单、键盘导航）+ 测试资产（场景固化）+ 仓库治理（历史清洗）
