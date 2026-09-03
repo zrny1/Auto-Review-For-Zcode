@@ -6,12 +6,15 @@
  *       （无边框 RTB 内嵌圆角 Panel）；扁平分区；按钮圆角加大间距；
  *       滚动条策略：内容自动换行 + 加高展示区，仅在溢出时出现系统滚动条（WinForms 无法重绘原生滚动条）
  *       行为：无超时等待用户决策；左右键移动按钮光标（白框）+ 回车点击焦点按钮（初始焦点=拒绝）；
- *       Esc / 关闭窗口 = 拒绝（2026年08月31日按用户要求调整）
+ *       Esc / 关闭窗口 = 拒绝（2026年08月31日按用户要求调整）；
+ *       窗口从未显示（无桌面/锁屏/无法承载 GUI）= 退出码 3 = timeout，回落客户端原生审批，
+ *       绝不把"没弹出来"误当成用户拒绝（2026年09月03日修复）
  * 功能:
  *   - parseReasonForDialog: 把 reason 文本解析为结构化展示数据
+ *   - mapDialogExitCode: PowerShell 退出码 → allow/session/deny/timeout 映射
  *   - askUserViaDialog: 阻塞式弹出 WinForms 对话框，返回 allow/session/deny/timeout
  * 依赖: node:child_process（PowerShell WinForms，零第三方依赖）
- * 更新日期: 2026年08月31日
+ * 更新日期: 2026年09月03日
  */
 
 import { spawnSync } from "node:child_process";
@@ -20,9 +23,12 @@ import { spawnSync } from "node:child_process";
 const DIALOG_HARD_LIMIT_MS = 24 * 3600 * 1000;
 
 // PowerShell 脚本退出码约定：0=允许 1=拒绝（含直接关闭窗口） 2=本次对话允许
+// 3=窗口从未显示（基础设施故障）——必须与"用户点了拒绝"区分开，否则无桌面/锁屏时
+// 会被误当成真人拒绝直接拦掉命令；Node 侧把 3 映射为 timeout 回落客户端原生审批
 const EXIT_ALLOW = 0;
 const EXIT_DENY = 1;
 const EXIT_SESSION = 2;
+const EXIT_NOT_SHOWN = 3;
 
 // 深色主题配色（与 gui.js 的设置界面保持一致，风格对齐 ZCode 客户端）
 const THEME = {
@@ -71,6 +77,13 @@ const DIALOG_PS_SCRIPT = [
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
   "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARDwm{[DllImport(\"dwmapi.dll\")]public static extern int DwmSetWindowAttribute(IntPtr h,int a,ref int v,int s);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);}' } catch {}",
+  // 锁屏/无交互桌面（Session 0 / 服务 / 远程断开）时输入桌面不可达：OpenInputDesktop 返回空句柄。
+  // 此时弹窗用户也看不到，直接 exit 3 回落客户端原生审批，避免"没弹框被当成拒绝"；
+  // 探测不可用（Add-Type 失败等）时按旧行为继续弹窗，不因探测缺失误伤正常桌面
+  "try { Add-Type 'using System;using System.Runtime.InteropServices;public class ARInputDesktop{[DllImport(\"user32.dll\")]public static extern IntPtr OpenInputDesktop(uint f,bool i,uint a);[DllImport(\"user32.dll\")]public static extern bool CloseDesktop(IntPtr h);}' } catch {}",
+  "$inputInteractive=$true",
+  "try{ $desk=[ARInputDesktop]::OpenInputDesktop(0,$false,0); if($desk.ToInt64() -eq 0){ $inputInteractive=$false } else { [void][ARInputDesktop]::CloseDesktop($desk) } }catch{}",
+  "if(-not $inputInteractive){ exit 3 }",
   // ARNavForm：方向键/回车在消息预处理层（ProcessCmdKey）拦截——先于一切控件处理，
   // 不经 PowerShell 事件（其委托开销会造成丢键），光标边框与点击全部原生执行
   "try { Add-Type -TypeDefinition 'using System;using System.Windows.Forms;using System.Drawing;public class ARNavForm:Form{public Button[] NavButtons;public int NavIndex=-1;public void MoveNav(int i){if(NavButtons==null||NavButtons.Length==0){return;}if(i<0){i=0;}if(i>NavButtons.Length-1){i=NavButtons.Length-1;}NavIndex=i;foreach(Button b in NavButtons){b.FlatAppearance.BorderSize=0;}Button nb=NavButtons[i];nb.FlatAppearance.BorderSize=2;nb.FlatAppearance.BorderColor=Color.White;nb.Focus();}protected override bool ProcessCmdKey(ref Message m,Keys k){if(NavButtons!=null){if(k==Keys.Left){MoveNav(NavIndex-1);return true;}if(k==Keys.Right){MoveNav(NavIndex+1);return true;}if(k==Keys.Enter){if(NavIndex>=0){MoveNav(NavIndex);NavButtons[NavIndex].PerformClick();}return true;}}return base.ProcessCmdKey(ref m,k);}}' -ReferencedAssemblies System.dll,System.Windows.Forms.dll,System.Drawing.dll } catch {}",
@@ -172,6 +185,9 @@ const DIALOG_PS_SCRIPT = [
   "Round $ba 10",
   "$f.Controls.AddRange(@($t,$badge,$cl,$card,$b,$sep,$h,$bs,$bd,$ba))",
   "$f.Tag='deny'",
+  // 窗口是否真正显示过：Shown 事件触发即说明可见（哪怕被锁屏盖住也在等待用户），
+  // 未触发则说明桌面/窗口站无法承载 GUI，脚本不应把"没弹出来"当成用户拒绝
+  "$script:dialog_shown=$false",
   "$ba.Add_Click({$f.Tag='allow';$f.Close()})",
   "$bs.Add_Click({$f.Tag='session';$f.Close()})",
   "$bd.Add_Click({$f.Tag='deny';$f.Close()})",
@@ -182,20 +198,38 @@ const DIALOG_PS_SCRIPT = [
   // 强制可见 + 深色标题栏 + Win11 窗口圆角
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",
-  "$f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate(); $f.MoveNav(0) } catch {} })",
+  "$f.Add_Shown({ $script:dialog_shown=$true; try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate(); $f.MoveNav(0) } catch {} })",
   // ShowWindow(SW_SHOW) 兜底强制显示后，WinForms 可能因消息时序把窗体标记为"已可见"，
   // ShowDialog 对已可见窗体会抛 InvalidOperationException 直接杀进程（表现为窗口闪退）——
   // 此时窗体已在屏幕上，降级为 Application::Run 手动消息循环，窗口关闭即返回，退出码契约不变
   "try{ [void]$f.ShowDialog() } catch { try{ [System.Windows.Forms.Application]::Run($f) }catch{} }",
+  // 从未显示过且无任何按钮点击 → 基础设施故障（exit 3），不能冒充用户拒绝；
+  // 显示过但被关闭/Esc → Tag 保持 deny → exit 1（用户拒绝），与旧契约一致
+  "if($f.Tag -eq 'deny' -and -not $script:dialog_shown){ exit 3 }",
   "switch($f.Tag){'allow'{exit 0}'session'{exit 2}default{exit 1}}",
 ].join("\n");
+
+/**
+ * 函数功能: 把 PowerShell 进程退出码映射为对话框裁决结果
+ * @param {number|null} status - 子进程退出码（崩溃/超时杀进程为 null）
+ * @returns {"allow"|"session"|"deny"|"timeout"} 裁决；timeout 表示对话框未生效（基础设施故障）
+ */
+function mapDialogExitCode(status) {
+  if (status === EXIT_ALLOW) return "allow";
+  if (status === EXIT_SESSION) return "session";
+  // 3=窗口从未显示（无桌面/锁屏/无法承载 GUI），视为基础设施故障而非用户拒绝
+  if (status === EXIT_NOT_SHOWN) return "timeout";
+  if (status === EXIT_DENY) return "deny";
+  return "timeout";
+}
 
 /**
  * 函数功能: 弹出深色主题审查对话框并阻塞等待用户操作（无超时，直到用户决策）
  * @param {string} title - 对话框标题
  * @param {string} command - 待审查命令全文
  * @param {string} reason - 审查分析全文
- * @returns {"allow"|"session"|"deny"|"timeout"} 用户选择；session=本次对话允许；仅基础设施故障返回 timeout
+ * @returns {"allow"|"session"|"deny"|"timeout"} 用户选择；session=本次对话允许；
+ *          timeout=对话框未能生效（窗口未显示/进程异常），调用方应回落客户端原生审批
  */
 function askUserViaDialog(title, command, reason) {
   if (process.platform !== "win32") {
@@ -221,16 +255,7 @@ function askUserViaDialog(title, command, reason) {
         windowsHide: true,
       },
     );
-    if (t_result.status === EXIT_ALLOW) {
-      return "allow";
-    }
-    if (t_result.status === EXIT_SESSION) {
-      return "session";
-    }
-    if (t_result.status === EXIT_DENY) {
-      return "deny";
-    }
-    return "timeout";
+    return mapDialogExitCode(t_result.status);
   } catch {
     // 对话框通道整体不可用时回落客户端原生审批，绝不因 UI 故障放行
     return "timeout";
@@ -239,7 +264,12 @@ function askUserViaDialog(title, command, reason) {
 
 export {
   askUserViaDialog,
+  mapDialogExitCode,
   parseReasonForDialog,
   THEME,
   DIALOG_PS_SCRIPT,
+  EXIT_ALLOW,
+  EXIT_DENY,
+  EXIT_SESSION,
+  EXIT_NOT_SHOWN,
 };

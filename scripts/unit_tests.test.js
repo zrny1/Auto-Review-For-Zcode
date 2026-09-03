@@ -61,7 +61,7 @@ const {
   readCachedDecision,
   writeCachedDecision,
 } = await import("../src/reviewer.js");
-const { resolveProvider, ProviderError } = await import("../src/provider.js");
+const { resolveProvider, resolveProviderOverride, ProviderError } = await import("../src/provider.js");
 
 test("settings: 默认值与数据目录覆盖合并", () => {
   const t_settings = loadSettings();
@@ -209,6 +209,29 @@ test("provider: 显式指定其他 provider（含/不含 builtin: 前缀）", ()
 test("provider: 缺 apiKey / 未知 provider 报可读错误", () => {
   assert.throws(() => resolveProvider({ provider: "no-key", model: "", timeout_ms: 5000 }), ProviderError);
   assert.throws(() => resolveProvider({ provider: "不存在", model: "", timeout_ms: 5000 }), /不存在/);
+});
+
+test("provider: resolveProviderOverride 按名解析（fallback 用）", () => {
+  // 显式指定 provider + 模型（与 settings.provider/model 无关）
+  const t_info = resolveProviderOverride({ timeout_ms: 5000 }, "fake-openai", "fake-openai-model");
+  assert.equal(t_info.kind, "openai");
+  assert.equal(t_info.model, "fake-openai-model");
+  // 空名跟随第一个 enabled provider
+  const t_follow = resolveProviderOverride({ timeout_ms: 5000 }, "", "");
+  assert.equal(t_follow.kind, "anthropic");
+  assert.equal(t_follow.model, "fake-model");
+  // 未知 provider 抛 ProviderError
+  assert.throws(() => resolveProviderOverride({ timeout_ms: 5000 }, "不存在", ""), ProviderError);
+});
+
+test("dialog: 退出码映射——未显示(3)回落 timeout，不冒充用户拒绝", async () => {
+  const { mapDialogExitCode } = await import("../src/dialog.js");
+  assert.equal(mapDialogExitCode(0), "allow");
+  assert.equal(mapDialogExitCode(1), "deny", "窗口显示后关闭/Esc = 用户拒绝");
+  assert.equal(mapDialogExitCode(2), "session");
+  assert.equal(mapDialogExitCode(3), "timeout", "窗口从未显示 = 基础设施故障回落客户端审批");
+  assert.equal(mapDialogExitCode(null), "timeout", "进程崩溃/超时杀进程回落");
+  assert.equal(mapDialogExitCode(99), "timeout", "未知退出码保守回落");
 });
 
 test("reviewer: 复合命令分割器——引号/命令替换内的分隔符不切分", () => {

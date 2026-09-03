@@ -68,7 +68,8 @@ const t_fake_llm = http.createServer((t_req, t_res) => {
 await new Promise((t_resolve) => t_fake_llm.listen(0, "127.0.0.1", t_resolve));
 const t_port = t_fake_llm.address().port;
 
-// ZCode 配置：唯一 enabled 的 provider 指向假服务（跟随主 agent 语义即命中它）
+// ZCode 配置：唯一 enabled 的 provider 指向假服务（跟随主 agent 语义即命中它）；
+// 另加两个必然 ECONNREFUSED 的"死 provider"，用于 fallback 切换场景（场景13/14）
 fs.writeFileSync(process.env.AUTO_REVIEW_ZCODE_CONFIG, JSON.stringify({
   provider: {
     "builtin:fake-llm": {
@@ -77,6 +78,20 @@ fs.writeFileSync(process.env.AUTO_REVIEW_ZCODE_CONFIG, JSON.stringify({
       enabled: true,
       options: { baseURL: `http://127.0.0.1:${t_port}/v1`, apiKey: "test-key" },
       models: { "fake-model": {} },
+    },
+    "builtin:dead": {
+      name: "Dead Primary",
+      kind: "openai",
+      enabled: false,
+      options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "dead-key" },
+      models: { "dead-model": {} },
+    },
+    "builtin:dead2": {
+      name: "Dead Fallback",
+      kind: "openai",
+      enabled: false,
+      options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "dead-key-2" },
+      models: { "dead-model-2": {} },
     },
   },
 }));
@@ -265,6 +280,39 @@ test("场景12: 会话隔离——另一会话不受已允许指令影响", asyn
   assert.equal(g_llm_request_count, 1);
   // 测试收尾清空白名单，避免影响后续用例
   clearSessionAllowlist();
+});
+
+// ─── 场景13-14: fallback provider（主 provider 不可用自动切换，仍失败转人工）───
+
+test("场景13: 主 provider 不可用——自动切换 fallback provider 完成审查", async () => {
+  writeRules([]);
+  const t_settings = loadSettings();
+  t_settings.provider = "dead";
+  t_settings.fallback_provider = "fake-llm";
+  t_settings.fallback_model = "fake-model";
+  saveSettings(t_settings);
+  const t_decision = await reviewCommand("node --version");
+  assert.equal(t_decision.action, "allow");
+  assert.equal(t_decision.source, "llm");
+  assert.match(t_decision.reason, /安全审查通过/);
+  // 主 provider（dead 端口）请求失败不达假服务，仅 fallback 命中假服务一次
+  assert.equal(g_llm_request_count, 1);
+});
+
+test("场景14: 主与 fallback 均不可用——兜底转人工，reason 汇总两次失败", async () => {
+  writeRules([]);
+  const t_settings = loadSettings();
+  t_settings.provider = "dead";
+  t_settings.fallback_provider = "dead2";
+  t_settings.fallback_model = "";
+  saveSettings(t_settings);
+  const t_decision = await reviewCommand("node --version");
+  assert.equal(t_decision.action, "ask");
+  assert.equal(t_decision.source, "fallback");
+  assert.match(t_decision.reason, /安全审查不可用/);
+  assert.match(t_decision.reason, /主 provider/);
+  assert.match(t_decision.reason, /fallback provider/);
+  assert.equal(g_llm_request_count, 0, "两个 provider 都不可达，假服务收不到请求");
 });
 
 test.after(() => {

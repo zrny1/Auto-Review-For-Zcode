@@ -36,6 +36,8 @@ const SETTABLE_KEYS = {
   review_tools: "string_array",
   provider: "string",
   model: "string",
+  fallback_provider: "string",
+  fallback_model: "string",
   timeout_ms: "int",
   cache_ttl_seconds: "int",
   max_payload_chars: "int",
@@ -82,6 +84,8 @@ function cmdStatus() {
   console.log(`review_tools: ${t_settings.review_tools.join(", ")}`);
   console.log(`provider: ${t_settings.provider || "(跟随主 agent 当前启用的 provider)"}`);
   console.log(`model: ${t_settings.model || "(该 provider 的第一个模型)"}`);
+  console.log(`fallback_provider: ${t_settings.fallback_provider || "(未配置，主 provider 不可用时直接转人工)"}`);
+  console.log(`fallback_model: ${t_settings.fallback_model || "(fallback 该 provider 的第一个模型)"}`);
   console.log(`timeout_ms: ${t_settings.timeout_ms}`);
   console.log(`cache_ttl_seconds: ${t_settings.cache_ttl_seconds}`);
   console.log(`max_payload_chars: ${t_settings.max_payload_chars}`);

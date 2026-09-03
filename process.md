@@ -75,6 +75,41 @@
 
 - 实机：光标初始在「拒 绝」、左右键每按必动（消息层处理零丢键）、回车点击光标按钮（choice=session）、Esc=拒绝（choice=deny）。
 
+## 第五轮：修复"部分 bash 被直接拒绝且不弹审查框" + fallback provider
+
+### 本轮需求/背景
+
+用户报告：部分 bash 命令被直接拒绝，完全没弹审查框。实测复现：当天所有 bash 调用（含 `pwd`/`ls`）都在 0.5s 内被拦，日志为 `[fallback] 审查失败转人工: HTTP 429`（BigModel GLM 本周额度耗尽）→ `[dialog] 用户拒绝`。
+
+### 排障结论
+
+三层叠加导致：
+1. LLM 429 限额 → 所有不命中本地规则的命令全部走 fallback 转人工（ask）；
+2. 当前桌面处于锁屏/无交互状态（进程里有 LockApp 锁屏、两屏截图均取不到画面），插件自绘 PowerShell WinForms 对话框无法真正显示；
+3. PowerShell 脚本默认 `$f.Tag='deny'`、末尾 `default{exit 1}`，窗口没弹出来时静默以 exit 1 收场，Node 侧把 1 当成"用户点了拒绝"——**"没弹框"被误报成"用户拒绝"**，命令被硬拦。时间戳是铁证：fallback→"用户拒绝"恒为 0.5s，真人无法在 0.5s 内读框并点击。
+
+### 方案/决策
+
+- **对话框未显示即回落客户端原生审批**（核心修复）：PowerShell 增加"窗口从未显示"（Shown 事件未触发）与"锁屏/无交互桌面"（OpenInputDesktop 返回空句柄）两条检测，任一命中用**独立退出码 3** 退出；Node 侧 `mapDialogExitCode` 把 3 映射为 `timeout`，hook_main 回落客户端原生审批（保持 ask），绝不把 UI 故障当成真人拒绝。退出码契约：0=允许 1=拒绝(含显示后关窗/Esc) 2=本次会话允许 3=未显示/基础设施故障。
+- **fallback provider**：`runLlmReview` 主 provider 解析/调用/输出解析任一失败自动切换 `fallback_provider`，全部失败抛汇总错误由上层兜底转人工（绝不带病放行）。解析复用新增 `resolveProviderOverride(settings, name, model)`，`resolveProvider` 变薄封装。配置新增 `fallback_provider`/`fallback_model`（settings 默认/ctl/gui 全链路）。
+
+### 实际修改步骤
+
+- `src/dialog.js`：新增 `EXIT_NOT_SHOWN=3`、`mapDialogExitCode`；PS 脚本加 `$script:dialog_shown`（Add_Shown 置真）+ 守卫 `if($f.Tag -eq 'deny' -and -not $script:dialog_shown){ exit 3 }`；顶部加 OpenInputDesktop 锁屏/无交互检测（探测失败按旧行为弹窗，不误伤正常桌面）。
+- `src/provider.js`：抽出 `resolveProviderOverride` 并导出；`resolveProvider` 改薄封装。
+- `src/reviewer.js`：`runLlmReview` 改为 provider 尝试列表循环（主 → fallback），失败记录后切下一个，全部失败 `throw new LlmError(汇总)`；llm 日志带 provider 标签。
+- `config/default_settings.json`：新增 `fallback_provider`/`fallback_model` 默认空串。
+- `src/ctl.js`：`SETTABLE_KEYS` 加两个键，`status` 输出 fallback 配置。
+- `src/gui.js`：模型区下方新增 Fallback Provider/模型两行（下拉复用 Theme-Combo），规则区整体下移 64px、窗体加高，保存写回两个字段。
+- 测试：`unit_tests` 新增 `resolveProviderOverride` 与 `mapDialogExitCode`（3→timeout）用例；`scenario_tests` 新增场景13（主 provider 死端口→自动切 fallback 完成审查，LLM 计数 1）与场景14（主与 fallback 均死→兜底转人工，reason 汇总两次失败）。
+- 部署：5 个 src 文件 + default_settings.json 同步安装插件缓存副本（`…/auto-review/0.1.0/`）。
+
+### 验证结果
+
+- 离线：单元 21/21、场景 16/16（含新增 13/14）、冒烟 14 断言组、PS 双脚本语法校验全绿。
+- 实机（配置 fallback_provider=火山方舟2 / deepseek-v4-flash）：主 GLM 429 → 日志 `WARN[llm] 主 provider 审查失败，切换下一个` → `使用 火山方舟2 / deepseek-v4-flash` → `allow (fallback provider)`，`pwd`/`tail` 均放行执行——**fallback 自动切换实机生效**。
+- 实机对话框：用户在场时正常弹出并可点击（探针实测用户点"本次会话允许"→ exit 2，Tag=session）；"窗口未显示/锁屏"路径由退出码 3 回落客户端审批覆盖。
+
 ## 遗留事项
 
 - 仓库级 git 身份已固化为 hh-zyb；全局配置仍为本机真实身份，跨仓库提交需注意。

@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 
 import { CACHE_FILE, SESSION_ALLOWLIST_FILE, logWrite, readJsonFile, writeFileAtomic } from "./common.js";
 import { loadSettings, loadDangerRules, loadSecurityPrompt } from "./settings.js";
-import { resolveProvider, callLlm, ProviderError, LlmError } from "./provider.js";
+import { resolveProviderOverride, callLlm, ProviderError, LlmError } from "./provider.js";
 import { ACTION_PASS, ACTION_ALLOW, ACTION_ASK, ACTION_DENY } from "./decision.js";
 
 // matcher 别名在内部过滤时归一到标准工具名（ApplyPatch 即 Write/Edit 的别名）
@@ -504,35 +504,55 @@ function buildReviewPayload(tool_name, tool_input, max_chars) {
 }
 
 /**
- * 函数功能: 执行安全子 agent 审查（provider 解析 → LLM 调用 → 解析 → 缓存）
+ * 函数功能: 执行安全子 agent 审查（provider 解析 → LLM 调用 → 解析 → 缓存），
+ *           主 provider 不可用自动切换 fallback provider，全部失败抛错由上层兜底转人工
  * @param {string} tool_name - 标准工具名
  * @param {object} tool_input - 工具调用参数
- * @param {object} settings - 运行时配置
+ * @param {object} settings - 运行时配置（provider/fallback_provider 等）
  * @returns {Promise<{action: string, reason: string}>} 决策对象
+ * @throws {LlmError} 所有 provider 均失败时抛出汇总原因
  */
 async function runLlmReview(tool_name, tool_input, settings) {
-  const t_provider = resolveProvider(settings);
   const t_prompt = loadSecurityPrompt();
   const t_payload = buildReviewPayload(tool_name, tool_input, settings.max_payload_chars);
 
-  const t_start_ms = Date.now();
-  const t_raw = await callLlm(t_provider, t_prompt, t_payload);
-  const t_verdict = parseVerdict(t_raw);
-  const t_duration_s = ((Date.now() - t_start_ms) / 1000).toFixed(1);
+  // 主 provider 失败自动切换 fallback；解析/调用/输出解析任一失败都视为该 provider 不可用。
+  // 未配置 fallback 时仅单次尝试，行为与旧版一致。
+  const t_has_fallback = Boolean(String(settings.fallback_provider || "").trim());
+  const t_attempts = [
+    { label: "主 provider", provider: settings.provider, model: settings.model },
+    ...(t_has_fallback ? [{ label: "fallback provider", provider: settings.fallback_provider, model: settings.fallback_model }] : []),
+  ];
+  const t_failures = [];
+  for (const [t_index, t_attempt] of t_attempts.entries()) {
+    try {
+      const t_provider = resolveProviderOverride(settings, t_attempt.provider, t_attempt.model);
+      const t_start_ms = Date.now();
+      const t_raw = await callLlm(t_provider, t_prompt, t_payload);
+      const t_verdict = parseVerdict(t_raw);
+      const t_duration_s = ((Date.now() - t_start_ms) / 1000).toFixed(1);
 
-  const t_decision = { action: t_verdict.decision };
-  let t_reason;
-  if (t_verdict.decision === ACTION_ALLOW) {
-    t_reason = `[auto-review] 安全审查通过（${t_verdict.risk_level}风险，${t_duration_s}s）: ${t_verdict.analysis}`;
-  } else {
-    t_reason = formatVerdictReason(t_verdict);
+      const t_decision = { action: t_verdict.decision };
+      let t_reason;
+      if (t_verdict.decision === ACTION_ALLOW) {
+        t_reason = `[auto-review] 安全审查通过（${t_verdict.risk_level}风险，${t_duration_s}s）: ${t_verdict.analysis}`;
+      } else {
+        t_reason = formatVerdictReason(t_verdict);
+      }
+      logWrite("INFO", "llm", `${t_verdict.decision} risk=${t_verdict.risk_level} ${t_duration_s}s (${t_attempt.label})`);
+      // 只有 LLM 结论入缓存（规则层是即时的，且规则变更后旧缓存可能失效）
+      writeCachedDecision(computeCacheKey(tool_name, tool_input), { action: t_verdict.decision, reason: t_reason }, settings.cache_ttl_seconds);
+      // ask 决策双发：reason 给客户端 deny/升级路径，additionalContext 保证分析进入主 agent 上下文
+      const t_extra = t_verdict.decision === ACTION_ASK ? { additionalContext: t_reason } : {};
+      return { action: t_verdict.decision, reason: t_reason, ...t_extra };
+    } catch (t_error) {
+      const t_has_next = t_index < t_attempts.length - 1;
+      t_failures.push(`${t_attempt.label}: ${t_error.message}`);
+      logWrite("WARN", "llm", `${t_attempt.label} 审查失败${t_has_next ? "，切换下一个" : "，转人工"}: ${t_error.message}`);
+    }
   }
-  logWrite("INFO", "llm", `${t_verdict.decision} risk=${t_verdict.risk_level} ${t_duration_s}s`);
-  // 只有 LLM 结论入缓存（规则层是即时的，且规则变更后旧缓存可能失效）
-  writeCachedDecision(computeCacheKey(tool_name, tool_input), { action: t_verdict.decision, reason: t_reason }, settings.cache_ttl_seconds);
-  // ask 决策双发：reason 给客户端 deny/升级路径，additionalContext 保证分析进入主 agent 上下文
-  const t_extra = t_verdict.decision === ACTION_ASK ? { additionalContext: t_reason } : {};
-  return { action: t_verdict.decision, reason: t_reason, ...t_extra };
+  // 全部 provider 失败：抛汇总错误，由上层兜底转人工（绝不带病放行）
+  throw new LlmError(t_failures.join("；"));
 }
 
 /**

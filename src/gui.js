@@ -4,11 +4,11 @@
  * 创建日期: 2026年08月29日
  * 描述: 扁平化分区（无 GroupBox 边框盒，节标题 + 留白分隔）；Win11 窗口圆角 + 深色标题栏；
  *       按钮圆角加大间距；规则列表为圆角卡片（无边框 ListBox 内嵌）；
- *       覆盖配置：总开关 / 审查对话框开关 / 审查工具 / provider 与模型 / 超时缓存 / 危险规则管理
+ *       覆盖配置：总开关 / 审查对话框开关 / 审查工具 / provider 与模型 / fallback provider / 超时缓存 / 危险规则管理
  * 功能:
  *   - launchSettingsGui: 阻塞式弹出设置窗口，关闭后返回
  * 依赖: node:child_process node:fs node:os node:path ./dialog.js(主题) ./common.js(路径)
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年09月03日
  */
 
 import fs from "node:fs";
@@ -124,7 +124,7 @@ const GUI_PS_SCRIPT = [
   "$f.BackColor=C '" + THEME.bg + "'",
   "$f.StartPosition='CenterScreen'; $f.FormBorderStyle='FixedDialog'; $f.MaximizeBox=$false",
   "$f.TopMost=$true",
-  "$f.Size=New-Object System.Drawing.Size(760,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
+  "$f.Size=New-Object System.Drawing.Size(760,760); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)",
   "$title=Lbl 'auto-review 设置' '" + THEME.text + "' 14 ([System.Drawing.FontStyle]::Bold)",
   "$title.Location=New-Object System.Drawing.Point(26,16)",
   // ── 开关区（扁平，自绘勾选框） ──
@@ -179,11 +179,37 @@ const GUI_PS_SCRIPT = [
   "$txCache.BackColor=C '" + THEME.panel + "'; $txCache.ForeColor=C '" + THEME.text + "'; $txCache.BorderStyle='FixedSingle'",
   "$txCache.Location=New-Object System.Drawing.Point(344,282); $txCache.Size=New-Object System.Drawing.Size(110,26)",
   "$txCache.Text=[string]$settings.cache_ttl_seconds",
+  // ── Fallback Provider 区（主 provider 不可用时自动切换，可留空） ──
+  "$s5=Sec 'Fallback Provider（主 provider 不可用时自动切换，留空则不启用）'; $s5.Location=New-Object System.Drawing.Point(26,322)",
+  "$l5=Lbl 'Fallback' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l5.Location=New-Object System.Drawing.Point(26,352)",
+  "$cbProvFb=New-Object System.Windows.Forms.ComboBox",
+  "$cbProvFb.DropDownStyle='DropDownList'; $cbProvFb.BackColor=C '" + THEME.panel + "'; $cbProvFb.ForeColor=C '" + THEME.text + "'; $cbProvFb.FlatStyle='Flat'",
+  "$cbProvFb.Location=New-Object System.Drawing.Point(110,348); $cbProvFb.Size=New-Object System.Drawing.Size(250,28)",
+  "[void]$cbProvFb.Items.Add('（无）')",
+  "foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProvFb.Items.Add($dn) }",
+  "$curFb=[string]$settings.fallback_provider",
+  "if(-not $curFb){ $cbProvFb.SelectedIndex=0 } else { $dn=$curFb -replace '^builtin:',''; if($cbProvFb.Items.Contains($dn)){ $cbProvFb.SelectedItem=$dn } else { $cbProvFb.SelectedIndex=0 } }",
+  "$l6=Lbl '模型' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l6.Location=New-Object System.Drawing.Point(400,352)",
+  "$cbModelFb=New-Object System.Windows.Forms.ComboBox",
+  "$cbModelFb.DropDownStyle='DropDownList'; $cbModelFb.BackColor=C '" + THEME.panel + "'; $cbModelFb.ForeColor=C '" + THEME.text + "'; $cbModelFb.FlatStyle='Flat'",
+  "$cbModelFb.Location=New-Object System.Drawing.Point(452,348); $cbModelFb.Size=New-Object System.Drawing.Size(284,28)",
+  "function Fill-Models-Fb{",
+  "  $cbModelFb.Items.Clear(); [void]$cbModelFb.Items.Add('（默认）')",
+  "  $key=$null",
+  "  if($cbProvFb.SelectedIndex -gt 0){ $key=$provKeyMap[[string]$cbProvFb.SelectedItem] }",
+  "  if($provTable -and $key -and $provTable.$key -and $provTable.$key.models){ foreach($m in @($provTable.$key.models.PSObject.Properties.Name)){ [void]$cbModelFb.Items.Add($m) } }",
+  "  $curModel=[string]$settings.fallback_model",
+  "  if($curModel -and $cbModelFb.Items.Contains($curModel)){ $cbModelFb.SelectedItem=$curModel } else { $cbModelFb.SelectedIndex=0 }",
+  "}",
+  "Fill-Models-Fb",
+  "$cbProvFb.Add_SelectedIndexChanged({ Fill-Models-Fb })",
+  "Theme-Combo $cbProvFb",
+  "Theme-Combo $cbModelFb",
   // ── 危险规则区（圆角列表卡片 + 独立按钮列） ──
-  "$s4=Sec '危险规则（优先于安全子 agent，不经过 LLM）'; $s4.Location=New-Object System.Drawing.Point(26,322)",
+  "$s4=Sec '危险规则（优先于安全子 agent，不经过 LLM）'; $s4.Location=New-Object System.Drawing.Point(26,386)",
   "$listCard=New-Object System.Windows.Forms.Panel",
   "$listCard.BackColor=C '" + THEME.panel + "'",
-  "$listCard.Location=New-Object System.Drawing.Point(26,348); $listCard.Size=New-Object System.Drawing.Size(466,198)",
+  "$listCard.Location=New-Object System.Drawing.Point(26,412); $listCard.Size=New-Object System.Drawing.Size(466,198)",
   "Round $listCard 12",
   "$lbRules=New-Object System.Windows.Forms.ListBox",
   "$lbRules.BackColor=C '" + THEME.panel + "'; $lbRules.ForeColor=C '" + THEME.text + "'; $lbRules.BorderStyle='None'",
@@ -212,13 +238,13 @@ const GUI_PS_SCRIPT = [
   "  foreach($r in $rules){ [void]$lbRules.Items.Add(('#'+$i+' ['+$r.action+'] '+$r.description+'  -  '+$r.pattern)); $i++ }",
   "}",
   "Refresh-Rules",
-  "$bAdd=Btn '添加规则' '" + THEME.accent + "' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(184,38); $bAdd.Location=New-Object System.Drawing.Point(516,348)",
-  "$bDel=Btn '删除所选' '" + THEME.denyBg + "' '" + THEME.riskHigh + "'; $bDel.Size=New-Object System.Drawing.Size(184,38); $bDel.Location=New-Object System.Drawing.Point(516,398)",
-  "$bTest=Btn '测试命中' '" + THEME.panel + "' '" + THEME.accent + "'; $bTest.Size=New-Object System.Drawing.Size(184,38); $bTest.Location=New-Object System.Drawing.Point(516,448)",
-  "$bReset=Btn '恢复出厂' '" + THEME.panel + "' '" + THEME.textDim + "'; $bReset.Size=New-Object System.Drawing.Size(184,38); $bReset.Location=New-Object System.Drawing.Point(516,498)",
+  "$bAdd=Btn '添加规则' '" + THEME.accent + "' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(184,38); $bAdd.Location=New-Object System.Drawing.Point(516,412)",
+  "$bDel=Btn '删除所选' '" + THEME.denyBg + "' '" + THEME.riskHigh + "'; $bDel.Size=New-Object System.Drawing.Size(184,38); $bDel.Location=New-Object System.Drawing.Point(516,462)",
+  "$bTest=Btn '测试命中' '" + THEME.panel + "' '" + THEME.accent + "'; $bTest.Size=New-Object System.Drawing.Size(184,38); $bTest.Location=New-Object System.Drawing.Point(516,512)",
+  "$bReset=Btn '恢复出厂' '" + THEME.panel + "' '" + THEME.textDim + "'; $bReset.Size=New-Object System.Drawing.Size(184,38); $bReset.Location=New-Object System.Drawing.Point(516,562)",
   "Round $bAdd 10; Round $bDel 10; Round $bTest 10; Round $bReset 10",
   "$rulesHint=Lbl '动作：deny=拦截 ask=转人工 allow=白名单；正则大小写不敏感' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
-  "$rulesHint.Location=New-Object System.Drawing.Point(26,556)",
+  "$rulesHint.Location=New-Object System.Drawing.Point(26,620)",
   // ── 规则操作逻辑 ──
   "$bAdd.Add_Click({",
   "  $sf=New-Object System.Windows.Forms.Form",
@@ -281,23 +307,25 @@ const GUI_PS_SCRIPT = [
   "})",
   // ── 底部：分隔线 + 状态 + 保存/关闭（圆角、大间距） ──
   "$sep=New-Object System.Windows.Forms.Label",
-  "$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(708,1); $sep.Location=New-Object System.Drawing.Point(26,590)",
+  "$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(708,1); $sep.Location=New-Object System.Drawing.Point(26,654)",
   "$sep.BackColor=C '" + THEME.border + "'",
   "$saved=Lbl '' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
-  "$saved.Location=New-Object System.Drawing.Point(26,618); $saved.AutoSize=$true",
+  "$saved.Location=New-Object System.Drawing.Point(26,682); $saved.AutoSize=$true",
   "$bClose=Btn '关 闭' '" + THEME.panel + "' '" + THEME.textDim + "'",
-  "$bClose.Size=New-Object System.Drawing.Size(150,42); $bClose.Location=New-Object System.Drawing.Point(420,606)",
+  "$bClose.Size=New-Object System.Drawing.Size(150,42); $bClose.Location=New-Object System.Drawing.Point(420,670)",
   "$bSave=Btn '保 存' '" + THEME.accent + "' '#FFFFFF'",
-  "$bSave.Size=New-Object System.Drawing.Size(150,42); $bSave.Location=New-Object System.Drawing.Point(586,606)",
+  "$bSave.Size=New-Object System.Drawing.Size(150,42); $bSave.Location=New-Object System.Drawing.Point(586,670)",
   "Round $bClose 10; Round $bSave 10",
   "$bSave.Add_Click({",
   "  try{",
   "    $tools=@(); foreach($tn in @('Bash','Write','Edit')){ if($toolChecks[$tn].Tag.checked){ $tools+=$tn } }",
   "    $provVal=''; if($cbProv.SelectedIndex -gt 0){ $provVal=$provKeyMap[[string]$cbProv.SelectedItem] }",
   "    $modelVal=''; if($cbModel.SelectedIndex -gt 0){ $modelVal=[string]$cbModel.SelectedItem }",
+  "    $fbProvVal=''; if($cbProvFb.SelectedIndex -gt 0){ $fbProvVal=$provKeyMap[[string]$cbProvFb.SelectedItem] }",
+  "    $fbModelVal=''; if($cbModelFb.SelectedIndex -gt 0){ $fbModelVal=[string]$cbModelFb.SelectedItem }",
   "    $to=0; [int]::TryParse($txTimeout.Text,[ref]$to) | Out-Null; if($to -lt 5000){$to=5000}; if($to -gt 45000){$to=45000}",
   "    $ca=0; [int]::TryParse($txCache.Text,[ref]$ca) | Out-Null; if($ca -lt 0){$ca=0}",
-  "    $o=[ordered]@{ enabled=$ckEnabled.Tag.checked; review_tools=$tools; provider=$provVal; model=$modelVal; timeout_ms=$to; cache_ttl_seconds=$ca; max_payload_chars=[int]$settings.max_payload_chars; dialog_on_ask=$ckDialog.Tag.checked }",
+  "    $o=[ordered]@{ enabled=$ckEnabled.Tag.checked; review_tools=$tools; provider=$provVal; model=$modelVal; fallback_provider=$fbProvVal; fallback_model=$fbModelVal; timeout_ms=$to; cache_ttl_seconds=$ca; max_payload_chars=[int]$settings.max_payload_chars; dialog_on_ask=$ckDialog.Tag.checked }",
   // 无 BOM 写：Set-Content -Encoding UTF8 恒写 BOM，node 侧 JSON.parse 需剥 BOM 才能读，统一改为 UTF8Encoding($false)
   "    $sj=(New-Object PSObject -Property $o) | ConvertTo-Json",
   "    [IO.File]::WriteAllText($settingsPath,$sj,(New-Object System.Text.UTF8Encoding($false)))",
@@ -311,7 +339,7 @@ const GUI_PS_SCRIPT = [
   "  } catch { [System.Windows.Forms.MessageBox]::Show($f,'保存失败: '+$_.Exception.Message,'auto-review') }",
   "})",
   "$bClose.Add_Click({ $f.Close() })",
-  "$f.Controls.AddRange(@($title,$s1,$ckEnabled,$ckDialog,$s2,$s3,$l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache,$s4,$listCard,$bAdd,$bDel,$bTest,$bReset,$rulesHint,$sep,$saved,$bClose,$bSave))",
+  "$f.Controls.AddRange(@($title,$s1,$ckEnabled,$ckDialog,$s2,$s3,$l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache,$s5,$l5,$cbProvFb,$l6,$cbModelFb,$s4,$listCard,$bAdd,$bDel,$bTest,$bReset,$rulesHint,$sep,$saved,$bClose,$bSave))",
   // 强制可见 + 深色标题栏 + Win11 圆角（Shown 整体兜底，绝不让异常逃逸到弹框）
   "[void]$f.Handle",
   "try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}",

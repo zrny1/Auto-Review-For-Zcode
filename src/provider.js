@@ -70,12 +70,14 @@ function pickProvider(zcode_config, wanted) {
 }
 
 /**
- * 函数功能: 解析出可直接调用的 provider 连接信息
- * @param {object} settings - 运行时配置（provider / model / timeout_ms）
+ * 函数功能: 解析指定 provider 的连接信息（主 provider 与 fallback 复用同一解析）
+ * @param {object} settings - 运行时配置（timeout_ms）
+ * @param {string} provider_name - 目标 provider 名，空串表示跟随主 agent
+ * @param {string} model_name - 目标模型名，空串表示该 provider 第一个模型
  * @returns {{kind: string, baseURL: string, apiKey: string, model: string, timeoutMs: number}}
  * @throws {ProviderError} 配置不完整时抛出，原因写入日志
  */
-function resolveProvider(settings) {
+function resolveProviderOverride(settings, provider_name, model_name) {
   let t_config = null;
   let t_used_file = "";
   for (const t_candidate of zcodeConfigCandidates()) {
@@ -89,7 +91,7 @@ function resolveProvider(settings) {
     throw new ProviderError("未找到 ZCode 配置文件（~/.zcode/v2/config.json 或 ~/.zcode/cli/config.json）");
   }
 
-  const t_entry = pickProvider(t_config, String(settings.provider || "").trim());
+  const t_entry = pickProvider(t_config, String(provider_name || "").trim());
   const t_base_url = t_entry.options && t_entry.options.baseURL;
   const t_api_key = t_entry.options && t_entry.options.apiKey;
   if (!t_base_url) {
@@ -101,7 +103,7 @@ function resolveProvider(settings) {
   }
 
   const t_models = t_entry.models && typeof t_entry.models === "object" ? Object.keys(t_entry.models) : [];
-  const t_model = String(settings.model || "").trim() || t_models[0] || "";
+  const t_model = String(model_name || "").trim() || t_models[0] || "";
   if (!t_model) {
     throw new ProviderError("provider 无可用模型，请通过 /auto-review set model 指定");
   }
@@ -114,6 +116,16 @@ function resolveProvider(settings) {
     model: t_model,
     timeoutMs: settings.timeout_ms,
   };
+}
+
+/**
+ * 函数功能: 解析主 provider 连接信息（跟随 settings.provider / settings.model）
+ * @param {object} settings - 运行时配置（provider / model / timeout_ms）
+ * @returns {{kind: string, baseURL: string, apiKey: string, model: string, timeoutMs: number}}
+ * @throws {ProviderError} 配置不完整时抛出，原因写入日志
+ */
+function resolveProvider(settings) {
+  return resolveProviderOverride(settings, settings && settings.provider, settings && settings.model);
 }
 
 /**
@@ -210,5 +222,6 @@ export {
   ProviderError,
   LlmError,
   resolveProvider,
+  resolveProviderOverride,
   callLlm,
 };
