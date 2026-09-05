@@ -60,7 +60,7 @@ function Theme-Combo($cb){
 }
 $settingsPath=$env:AR_SETTINGS_FILE; $rulesPath=$env:AR_RULES_FILE
 $settings=Get-Content ($env:AR_DEFAULT_SETTINGS) -Raw -Encoding UTF8 | ConvertFrom-Json
-if(Test-Path $settingsPath){ try{ $settings=Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json }catch{} }
+if(Test-Path $settingsPath){ try{ $stored=Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json; $stored.PSObject.Properties | ForEach-Object { if($null -ne $_.Value){ $settings.($_.Name)=$_.Value } } }catch{} }
 $rules=@()
 if(Test-Path $rulesPath){ try{ $parsed=Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }) }catch{} }
 if($rules.Count -eq 0){ $parsed=Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }) }
@@ -73,7 +73,7 @@ $f.Text='auto-review 设置'
 $f.BackColor=C '#1E1E1E'
 $f.StartPosition='CenterScreen'; $f.FormBorderStyle='FixedDialog'; $f.MaximizeBox=$false
 $f.TopMost=$true
-$f.Size=New-Object System.Drawing.Size(760,700); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)
+$f.Size=New-Object System.Drawing.Size(760,876); $f.Font=New-Object System.Drawing.Font('Microsoft YaHei UI',9.75)
 $title=Lbl 'auto-review 设置' '#D4D4D4' 14 ([System.Drawing.FontStyle]::Bold)
 $title.Location=New-Object System.Drawing.Point(26,16)
 $s1=Sec '开关'; $s1.Location=New-Object System.Drawing.Point(26,56)
@@ -89,20 +89,27 @@ foreach($tn in @('Bash','Write','Edit')){
   $c.Location=New-Object System.Drawing.Point($tx,178)
   $f.Controls.Add($c); $toolChecks[$tn]=$c; $tx+=150
 }
-$s3=Sec '安全子 agent 模型'; $s3.Location=New-Object System.Drawing.Point(26,214)
-$l1=Lbl 'Provider' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l1.Location=New-Object System.Drawing.Point(26,246)
+$ckScripts=New-Check '脚本内容随命令送审（附加被调用脚本文件的内容）' 360 ($settings.inspect_scripts -eq $true)
+$ckScripts.Location=New-Object System.Drawing.Point(26,208)
+$l7=Lbl '上限(字节)' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l7.Location=New-Object System.Drawing.Point(404,212)
+$txScriptBytes=New-Object System.Windows.Forms.TextBox
+$txScriptBytes.BackColor=C '#252526'; $txScriptBytes.ForeColor=C '#D4D4D4'; $txScriptBytes.BorderStyle='FixedSingle'
+$txScriptBytes.Location=New-Object System.Drawing.Point(484,208); $txScriptBytes.Size=New-Object System.Drawing.Size(112,26)
+$txScriptBytes.Text=[string]$settings.script_max_bytes
+$s3=Sec '安全子 agent 模型'; $s3.Location=New-Object System.Drawing.Point(26,246)
+$l1=Lbl 'Provider' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l1.Location=New-Object System.Drawing.Point(26,278)
 $cbProv=New-Object System.Windows.Forms.ComboBox
 $cbProv.DropDownStyle='DropDownList'; $cbProv.BackColor=C '#252526'; $cbProv.ForeColor=C '#D4D4D4'; $cbProv.FlatStyle='Flat'
-$cbProv.Location=New-Object System.Drawing.Point(110,242); $cbProv.Size=New-Object System.Drawing.Size(250,28)
+$cbProv.Location=New-Object System.Drawing.Point(110,274); $cbProv.Size=New-Object System.Drawing.Size(250,28)
 [void]$cbProv.Items.Add('（跟随主 agent）')
 $provKeyMap=@{}
 foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProv.Items.Add($dn); $provKeyMap[$dn]=$k }
 $curProv=[string]$settings.provider
 if(-not $curProv){ $cbProv.SelectedIndex=0 } else { $dn=$curProv -replace '^builtin:',''; if($cbProv.Items.Contains($dn)){ $cbProv.SelectedItem=$dn } else { $cbProv.SelectedIndex=0 } }
-$l2=Lbl '模型' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l2.Location=New-Object System.Drawing.Point(400,246)
+$l2=Lbl '模型' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l2.Location=New-Object System.Drawing.Point(400,278)
 $cbModel=New-Object System.Windows.Forms.ComboBox
 $cbModel.DropDownStyle='DropDownList'; $cbModel.BackColor=C '#252526'; $cbModel.ForeColor=C '#D4D4D4'; $cbModel.FlatStyle='Flat'
-$cbModel.Location=New-Object System.Drawing.Point(452,242); $cbModel.Size=New-Object System.Drawing.Size(284,28)
+$cbModel.Location=New-Object System.Drawing.Point(452,274); $cbModel.Size=New-Object System.Drawing.Size(284,28)
 function Fill-Models{
   $cbModel.Items.Clear(); [void]$cbModel.Items.Add('（默认）')
   $key=$null
@@ -115,20 +122,45 @@ Fill-Models
 $cbProv.Add_SelectedIndexChanged({ Fill-Models })
 Theme-Combo $cbProv
 Theme-Combo $cbModel
-$l3=Lbl '超时(ms)' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l3.Location=New-Object System.Drawing.Point(26,286)
+$l3=Lbl '超时(ms)' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l3.Location=New-Object System.Drawing.Point(26,318)
 $txTimeout=New-Object System.Windows.Forms.TextBox
 $txTimeout.BackColor=C '#252526'; $txTimeout.ForeColor=C '#D4D4D4'; $txTimeout.BorderStyle='FixedSingle'
-$txTimeout.Location=New-Object System.Drawing.Point(110,282); $txTimeout.Size=New-Object System.Drawing.Size(110,26)
+$txTimeout.Location=New-Object System.Drawing.Point(110,314); $txTimeout.Size=New-Object System.Drawing.Size(110,26)
 $txTimeout.Text=[string]$settings.timeout_ms
-$l4=Lbl '缓存(秒)' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l4.Location=New-Object System.Drawing.Point(260,286)
+$l4=Lbl '缓存(秒)' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l4.Location=New-Object System.Drawing.Point(260,318)
 $txCache=New-Object System.Windows.Forms.TextBox
 $txCache.BackColor=C '#252526'; $txCache.ForeColor=C '#D4D4D4'; $txCache.BorderStyle='FixedSingle'
-$txCache.Location=New-Object System.Drawing.Point(344,282); $txCache.Size=New-Object System.Drawing.Size(110,26)
+$txCache.Location=New-Object System.Drawing.Point(344,314); $txCache.Size=New-Object System.Drawing.Size(110,26)
 $txCache.Text=[string]$settings.cache_ttl_seconds
-$s4=Sec '危险规则（优先于安全子 agent，不经过 LLM）'; $s4.Location=New-Object System.Drawing.Point(26,322)
+$s5=Sec 'Fallback Provider（主 provider 不可用时自动切换，留空则不启用）'; $s5.Location=New-Object System.Drawing.Point(26,354)
+$l5=Lbl 'Fallback' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l5.Location=New-Object System.Drawing.Point(26,384)
+$cbProvFb=New-Object System.Windows.Forms.ComboBox
+$cbProvFb.DropDownStyle='DropDownList'; $cbProvFb.BackColor=C '#252526'; $cbProvFb.ForeColor=C '#D4D4D4'; $cbProvFb.FlatStyle='Flat'
+$cbProvFb.Location=New-Object System.Drawing.Point(110,380); $cbProvFb.Size=New-Object System.Drawing.Size(250,28)
+[void]$cbProvFb.Items.Add('（无）')
+foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProvFb.Items.Add($dn) }
+$curFb=[string]$settings.fallback_provider
+if(-not $curFb){ $cbProvFb.SelectedIndex=0 } else { $dn=$curFb -replace '^builtin:',''; if($cbProvFb.Items.Contains($dn)){ $cbProvFb.SelectedItem=$dn } else { $cbProvFb.SelectedIndex=0 } }
+$l6=Lbl '模型' '#D4D4D4' 9 ([System.Drawing.FontStyle]::Regular); $l6.Location=New-Object System.Drawing.Point(400,384)
+$cbModelFb=New-Object System.Windows.Forms.ComboBox
+$cbModelFb.DropDownStyle='DropDownList'; $cbModelFb.BackColor=C '#252526'; $cbModelFb.ForeColor=C '#D4D4D4'; $cbModelFb.FlatStyle='Flat'
+$cbModelFb.Location=New-Object System.Drawing.Point(452,380); $cbModelFb.Size=New-Object System.Drawing.Size(284,28)
+function Fill-Models-Fb{
+  $cbModelFb.Items.Clear(); [void]$cbModelFb.Items.Add('（默认）')
+  $key=$null
+  if($cbProvFb.SelectedIndex -gt 0){ $key=$provKeyMap[[string]$cbProvFb.SelectedItem] }
+  if($provTable -and $key -and $provTable.$key -and $provTable.$key.models){ foreach($m in @($provTable.$key.models.PSObject.Properties.Name)){ [void]$cbModelFb.Items.Add($m) } }
+  $curModel=[string]$settings.fallback_model
+  if($curModel -and $cbModelFb.Items.Contains($curModel)){ $cbModelFb.SelectedItem=$curModel } else { $cbModelFb.SelectedIndex=0 }
+}
+Fill-Models-Fb
+$cbProvFb.Add_SelectedIndexChanged({ Fill-Models-Fb })
+Theme-Combo $cbProvFb
+Theme-Combo $cbModelFb
+$s4=Sec '危险规则（优先于安全子 agent，不经过 LLM）'; $s4.Location=New-Object System.Drawing.Point(26,418)
 $listCard=New-Object System.Windows.Forms.Panel
 $listCard.BackColor=C '#252526'
-$listCard.Location=New-Object System.Drawing.Point(26,348); $listCard.Size=New-Object System.Drawing.Size(466,198)
+$listCard.Location=New-Object System.Drawing.Point(26,444); $listCard.Size=New-Object System.Drawing.Size(466,198)
 Round $listCard 12
 $lbRules=New-Object System.Windows.Forms.ListBox
 $lbRules.BackColor=C '#252526'; $lbRules.ForeColor=C '#D4D4D4'; $lbRules.BorderStyle='None'
@@ -156,13 +188,19 @@ function Refresh-Rules{
   foreach($r in $rules){ [void]$lbRules.Items.Add(('#'+$i+' ['+$r.action+'] '+$r.description+'  -  '+$r.pattern)); $i++ }
 }
 Refresh-Rules
-$bAdd=Btn '添加规则' '#4C8DFF' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(184,38); $bAdd.Location=New-Object System.Drawing.Point(516,348)
-$bDel=Btn '删除所选' '#4A2B2E' '#F14C4C'; $bDel.Size=New-Object System.Drawing.Size(184,38); $bDel.Location=New-Object System.Drawing.Point(516,398)
-$bTest=Btn '测试命中' '#252526' '#4C8DFF'; $bTest.Size=New-Object System.Drawing.Size(184,38); $bTest.Location=New-Object System.Drawing.Point(516,448)
-$bReset=Btn '恢复出厂' '#252526' '#9D9D9D'; $bReset.Size=New-Object System.Drawing.Size(184,38); $bReset.Location=New-Object System.Drawing.Point(516,498)
+$bAdd=Btn '添加规则' '#4C8DFF' '#FFFFFF'; $bAdd.Size=New-Object System.Drawing.Size(184,38); $bAdd.Location=New-Object System.Drawing.Point(516,444)
+$bDel=Btn '删除所选' '#4A2B2E' '#F14C4C'; $bDel.Size=New-Object System.Drawing.Size(184,38); $bDel.Location=New-Object System.Drawing.Point(516,494)
+$bTest=Btn '测试命中' '#252526' '#4C8DFF'; $bTest.Size=New-Object System.Drawing.Size(184,38); $bTest.Location=New-Object System.Drawing.Point(516,544)
+$bReset=Btn '恢复出厂' '#252526' '#9D9D9D'; $bReset.Size=New-Object System.Drawing.Size(184,38); $bReset.Location=New-Object System.Drawing.Point(516,594)
 Round $bAdd 10; Round $bDel 10; Round $bTest 10; Round $bReset 10
 $rulesHint=Lbl '动作：deny=拦截 ask=转人工 allow=白名单；正则大小写不敏感' '#9D9D9D' 8.25 ([System.Drawing.FontStyle]::Regular)
-$rulesHint.Location=New-Object System.Drawing.Point(26,556)
+$rulesHint.Location=New-Object System.Drawing.Point(26,652)
+$s6=Sec '安全策略提示词（决定安全子 agent 的审查策略，保存后立即生效）'; $s6.Location=New-Object System.Drawing.Point(26,682)
+$promptState='出厂默认'; if(Test-Path $env:AR_PROMPT_FILE){ $promptState='已自定义' }
+$bPrompt=Btn '打开提示词编辑器' '#252526' '#4C8DFF'; $bPrompt.Size=New-Object System.Drawing.Size(184,38); $bPrompt.Location=New-Object System.Drawing.Point(26,710)
+Round $bPrompt 10
+$promptStatus=Lbl ('当前: '+$promptState+'（输出契约 JSON 字段名不可改动）') '#9D9D9D' 8.25 ([System.Drawing.FontStyle]::Regular)
+$promptStatus.Location=New-Object System.Drawing.Point(228,720)
 $bAdd.Add_Click({
   $sf=New-Object System.Windows.Forms.Form
   $sf.Text='添加危险规则'; $sf.BackColor=C '#1E1E1E'; $sf.FormBorderStyle='FixedDialog'; $sf.StartPosition='CenterParent'; $sf.TopMost=$true
@@ -222,24 +260,65 @@ $bReset.Add_Click({
     $parsed=Get-Content ($env:AR_DEFAULT_RULES) -Raw -Encoding UTF8 | ConvertFrom-Json; $rules=@($parsed | Where-Object { $_ -and $_.pattern }); Refresh-Rules
   }
 })
+$bPrompt.Add_Click({
+  $pf=New-Object System.Windows.Forms.Form
+  $pf.Text='安全策略提示词编辑器'; $pf.BackColor=C '#1E1E1E'; $pf.FormBorderStyle='FixedDialog'; $pf.StartPosition='CenterParent'; $pf.TopMost=$true
+  $pf.Size=New-Object System.Drawing.Size(820,664)
+  $ph=Lbl '安全子 agent 系统提示词全文（保存后立即生效；输出契约 JSON 字段名不可改动）' '#9D9D9D' 8.25 ([System.Drawing.FontStyle]::Regular)
+  $ph.Location=New-Object System.Drawing.Point(26,16)
+  $txPrompt=New-Object System.Windows.Forms.TextBox
+  $txPrompt.Multiline=$true; $txPrompt.ScrollBars='Both'; $txPrompt.WordWrap=$false
+  $txPrompt.BackColor=C '#252526'; $txPrompt.ForeColor=C '#D4D4D4'; $txPrompt.BorderStyle='FixedSingle'
+  $txPrompt.Font=New-Object System.Drawing.Font('Consolas',9.75)
+  $txPrompt.Location=New-Object System.Drawing.Point(26,42); $txPrompt.Size=New-Object System.Drawing.Size(748,492)
+  $srcPrompt=$env:AR_PROMPT_FILE; if(-not (Test-Path $srcPrompt)){ $srcPrompt=$env:AR_DEFAULT_PROMPT }
+  try{ $txPrompt.Text=[IO.File]::ReadAllText($srcPrompt) }catch{ $txPrompt.Text='' }
+  $bPReset=Btn '恢复出厂内容' '#252526' '#9D9D9D'; $bPReset.Size=New-Object System.Drawing.Size(170,42); $bPReset.Location=New-Object System.Drawing.Point(26,556)
+  $bPClose=Btn '关 闭' '#252526' '#9D9D9D'; $bPClose.Size=New-Object System.Drawing.Size(160,42); $bPClose.Location=New-Object System.Drawing.Point(446,556)
+  $bPSave=Btn '保 存' '#4C8DFF' '#FFFFFF'; $bPSave.Size=New-Object System.Drawing.Size(160,42); $bPSave.Location=New-Object System.Drawing.Point(614,556)
+  Round $bPReset 10; Round $bPClose 10; Round $bPSave 10
+  $bPReset.Add_Click({ try{ $txPrompt.Text=[IO.File]::ReadAllText($env:AR_DEFAULT_PROMPT) }catch{} })
+  $bPSave.Add_Click({
+    $txt=$txPrompt.Text
+    if(-not $txt.Trim()){ [System.Windows.Forms.MessageBox]::Show($pf,'提示词不能为空','auto-review'); return }
+    $missing=@('decision','risk_level','analysis','risks','scope') | Where-Object { $txt -notmatch [regex]::Escape($_) }
+    if($missing.Count -gt 0){
+      $q='缺少输出契约字段: '+($missing -join ', ')+'。审查引擎按此契约解析，缺失可能导致全部审查兜底转人工。仍要保存？'
+      if([System.Windows.Forms.MessageBox]::Show($pf,$q,'auto-review','YesNo') -ne 'Yes'){ return }
+    }
+    try{
+      $dirPrompt=[IO.Path]::GetDirectoryName($env:AR_PROMPT_FILE); if(-not (Test-Path $dirPrompt)){ [IO.Directory]::CreateDirectory($dirPrompt) | Out-Null }
+      [IO.File]::WriteAllText($env:AR_PROMPT_FILE,$txt,(New-Object System.Text.UTF8Encoding($false)))
+      $promptStatus.Text='当前: 已自定义（输出契约 JSON 字段名不可改动）'
+      [void][System.Windows.Forms.MessageBox]::Show($pf,'已保存，下次审查即生效（每次审查前现读文件）','auto-review')
+      $pf.Close()
+    } catch { [System.Windows.Forms.MessageBox]::Show($pf,'保存失败: '+$_.Exception.Message,'auto-review') }
+  })
+  $bPClose.Add_Click({ $pf.Close() })
+  $pf.Controls.AddRange(@($ph,$txPrompt,$bPReset,$bPClose,$bPSave))
+  [void]$pf.ShowDialog($f)
+})
 $sep=New-Object System.Windows.Forms.Label
-$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(708,1); $sep.Location=New-Object System.Drawing.Point(26,590)
+$sep.AutoSize=$false; $sep.Size=New-Object System.Drawing.Size(708,1); $sep.Location=New-Object System.Drawing.Point(26,770)
 $sep.BackColor=C '#3E3E42'
 $saved=Lbl '' '#9D9D9D' 8.25 ([System.Drawing.FontStyle]::Regular)
-$saved.Location=New-Object System.Drawing.Point(26,618); $saved.AutoSize=$true
+$saved.Location=New-Object System.Drawing.Point(26,798); $saved.AutoSize=$true
 $bClose=Btn '关 闭' '#252526' '#9D9D9D'
-$bClose.Size=New-Object System.Drawing.Size(150,42); $bClose.Location=New-Object System.Drawing.Point(420,606)
+$bClose.Size=New-Object System.Drawing.Size(150,42); $bClose.Location=New-Object System.Drawing.Point(420,786)
 $bSave=Btn '保 存' '#4C8DFF' '#FFFFFF'
-$bSave.Size=New-Object System.Drawing.Size(150,42); $bSave.Location=New-Object System.Drawing.Point(586,606)
+$bSave.Size=New-Object System.Drawing.Size(150,42); $bSave.Location=New-Object System.Drawing.Point(586,786)
 Round $bClose 10; Round $bSave 10
 $bSave.Add_Click({
   try{
     $tools=@(); foreach($tn in @('Bash','Write','Edit')){ if($toolChecks[$tn].Tag.checked){ $tools+=$tn } }
     $provVal=''; if($cbProv.SelectedIndex -gt 0){ $provVal=$provKeyMap[[string]$cbProv.SelectedItem] }
     $modelVal=''; if($cbModel.SelectedIndex -gt 0){ $modelVal=[string]$cbModel.SelectedItem }
+    $fbProvVal=''; if($cbProvFb.SelectedIndex -gt 0){ $fbProvVal=$provKeyMap[[string]$cbProvFb.SelectedItem] }
+    $fbModelVal=''; if($cbModelFb.SelectedIndex -gt 0){ $fbModelVal=[string]$cbModelFb.SelectedItem }
     $to=0; [int]::TryParse($txTimeout.Text,[ref]$to) | Out-Null; if($to -lt 5000){$to=5000}; if($to -gt 45000){$to=45000}
     $ca=0; [int]::TryParse($txCache.Text,[ref]$ca) | Out-Null; if($ca -lt 0){$ca=0}
-    $o=[ordered]@{ enabled=$ckEnabled.Tag.checked; review_tools=$tools; provider=$provVal; model=$modelVal; timeout_ms=$to; cache_ttl_seconds=$ca; max_payload_chars=[int]$settings.max_payload_chars; dialog_on_ask=$ckDialog.Tag.checked }
+    $sb=16000; [int]::TryParse($txScriptBytes.Text,[ref]$sb) | Out-Null; if($sb -lt 1000){$sb=1000}; if($sb -gt 100000){$sb=100000}
+    $o=[ordered]@{ enabled=$ckEnabled.Tag.checked; review_tools=$tools; provider=$provVal; model=$modelVal; fallback_provider=$fbProvVal; fallback_model=$fbModelVal; timeout_ms=$to; cache_ttl_seconds=$ca; max_payload_chars=[int]$settings.max_payload_chars; inspect_scripts=$ckScripts.Tag.checked; script_max_bytes=$sb; dialog_on_ask=$ckDialog.Tag.checked }
     $sj=(New-Object PSObject -Property $o) | ConvertTo-Json
     [IO.File]::WriteAllText($settingsPath,$sj,(New-Object System.Text.UTF8Encoding($false)))
     $rules=@($rules | ForEach-Object { $_ })
@@ -250,8 +329,8 @@ $bSave.Add_Click({
   } catch { [System.Windows.Forms.MessageBox]::Show($f,'保存失败: '+$_.Exception.Message,'auto-review') }
 })
 $bClose.Add_Click({ $f.Close() })
-$f.Controls.AddRange(@($title,$s1,$ckEnabled,$ckDialog,$s2,$s3,$l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache,$s4,$listCard,$bAdd,$bDel,$bTest,$bReset,$rulesHint,$sep,$saved,$bClose,$bSave))
+$f.Controls.AddRange(@($title,$s1,$ckEnabled,$ckDialog,$s2,$ckScripts,$l7,$txScriptBytes,$s3,$l1,$cbProv,$l2,$cbModel,$l3,$txTimeout,$l4,$txCache,$s5,$l5,$cbProvFb,$l6,$cbModelFb,$s4,$listCard,$bAdd,$bDel,$bTest,$bReset,$rulesHint,$s6,$bPrompt,$promptStatus,$sep,$saved,$bClose,$bSave))
 [void]$f.Handle
 try{ [ARDwm]::ShowWindow($f.Handle,5) | Out-Null }catch{}
 $f.Add_Shown({ try{ $dark=1; [ARDwm]::DwmSetWindowAttribute($f.Handle,20,[ref]$dark,4); $cr=2; [ARDwm]::DwmSetWindowAttribute($f.Handle,33,[ref]$cr,4); $f.Activate() } catch {} })
-[void]$f.ShowDialog()
+try{ [void]$f.ShowDialog() } catch { try{ [System.Windows.Forms.Application]::Run($f) }catch{} }
