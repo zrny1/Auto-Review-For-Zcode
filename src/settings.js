@@ -5,11 +5,11 @@
  * 描述: 数据目录文件优先，缺失或损坏时回落插件包内出厂默认；
  *       所有写入走原子写；规则对象在加载时即编译正则，非法规则跳过并告警
  * 功能:
- *   - loadSettings/saveSettings: 运行时配置（开关、审查工具、provider 等）
+ *   - loadSettings/saveSettings: 运行时配置（开关、审查工具、provider、脚本送审等）
  *   - loadDangerRules: 危险规则表（含正则编译与容错）
  *   - loadSecurityPrompt: 安全子 agent 系统提示词
  * 依赖: ./common.js
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年09月05日
  */
 
 import path from "node:path";
@@ -30,6 +30,10 @@ import {
 // LLM 超时的合法区间：下限保证可用性，上限必须小于 hook 总预算 60s，留出规则/缓存/进程启动时间
 const TIMEOUT_MS_MIN = 5000;
 const TIMEOUT_MS_MAX = 45000;
+
+// 脚本送审单文件读取上限的合法区间：过小无审查价值，过大撑爆载荷与 token 预算
+const SCRIPT_BYTES_MIN = 1000;
+const SCRIPT_BYTES_MAX = 100000;
 
 // 合法动作集合，规则 action 超出此集合按 ask 处理（宁可多问不放过）
 const VALID_RULE_ACTIONS = new Set(["deny", "ask", "allow"]);
@@ -69,6 +73,7 @@ function loadSettings() {
   t_merged.timeout_ms = Math.min(TIMEOUT_MS_MAX, Math.max(TIMEOUT_MS_MIN, Number(t_merged.timeout_ms) || TIMEOUT_MS_MAX));
   t_merged.cache_ttl_seconds = Math.max(0, Number(t_merged.cache_ttl_seconds) || 0);
   t_merged.max_payload_chars = Math.max(500, Number(t_merged.max_payload_chars) || 8000);
+  t_merged.script_max_bytes = Math.min(SCRIPT_BYTES_MAX, Math.max(SCRIPT_BYTES_MIN, Number(t_merged.script_max_bytes) || 16000));
   return t_merged;
 }
 

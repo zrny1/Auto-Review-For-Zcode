@@ -60,6 +60,10 @@ const {
   formatVerdictReason,
   readCachedDecision,
   writeCachedDecision,
+  extractScriptRefs,
+  collectScriptAttachments,
+  hashAttachments,
+  buildReviewPayload,
 } = await import("../src/reviewer.js");
 const { resolveProvider, resolveProviderOverride, ProviderError } = await import("../src/provider.js");
 
@@ -308,6 +312,107 @@ test("dialog: reason 解析为结构化展示数据", async () => {
   // 中等风险小写归一
   const t_mid = parseReasonForDialog("[auto-review] 风险级别 Medium: x\n影响范围: y");
   assert.equal(t_mid.risk, "medium");
+});
+
+test("settings: 脚本送审新键默认值、覆盖与钳制", () => {
+  const t_defaults = loadSettings();
+  assert.equal(t_defaults.inspect_scripts, false, "脚本送审默认关闭");
+  assert.equal(t_defaults.script_max_bytes, 16000);
+
+  fs.writeFileSync(path.join(t_tmp_dir, "settings.json"), JSON.stringify({ inspect_scripts: true, script_max_bytes: 50 }));
+  const t_merged = loadSettings();
+  assert.equal(t_merged.inspect_scripts, true, "布尔覆盖生效");
+  assert.equal(t_merged.script_max_bytes, 1000, "低于下限应钳到 1000");
+
+  fs.writeFileSync(path.join(t_tmp_dir, "settings.json"), JSON.stringify({ inspect_scripts: "yes" }));
+  assert.equal(loadSettings().inspect_scripts, false, "布尔字段给了字符串应回落默认");
+});
+
+test("reviewer: extractScriptRefs 解释器/特判/裸路径提取", () => {
+  assert.deepEqual(extractScriptRefs("python D:/app/tool.py"), ["D:/app/tool.py"]);
+  assert.deepEqual(extractScriptRefs("python3 -u ./build.py --flag"), ["./build.py"], "选项后的脚本路径");
+  assert.deepEqual(extractScriptRefs("node --watch src/index.js"), ["src/index.js"]);
+  assert.deepEqual(extractScriptRefs("bash /opt/deploy.sh && python a.py"), ["/opt/deploy.sh", "a.py"], "复合命令逐段提取");
+  assert.deepEqual(extractScriptRefs('python "D:/app/my tool.py"'), ["D:/app/my tool.py"], "引号内空格不切分");
+  assert.deepEqual(extractScriptRefs("powershell -File C:/x.ps1"), ["C:/x.ps1"]);
+  assert.deepEqual(extractScriptRefs("cmd /c build.bat"), ["build.bat"]);
+  assert.deepEqual(extractScriptRefs("./scripts/setup.sh"), ["./scripts/setup.sh"], "裸脚本路径执行");
+  assert.deepEqual(extractScriptRefs("python -c \"print(1)\""), [], "内联代码不提取");
+  assert.deepEqual(extractScriptRefs("python -m pytest"), [], "模块模式不提取");
+  assert.deepEqual(extractScriptRefs("ls; cat x.txt"), [], "非脚本扩展名不提取");
+  assert.deepEqual(extractScriptRefs(""), [], "空命令");
+});
+
+test("reviewer: collectScriptAttachments 读取、截断与二进制/缺失防御", () => {
+  const t_dir = fs.mkdtempSync(path.join(os.tmpdir(), "auto-review-script-"));
+  try {
+    fs.writeFileSync(path.join(t_dir, "safe.py"), "print('ok')");
+    fs.writeFileSync(path.join(t_dir, "big.py"), "x".repeat(5000));
+    fs.writeFileSync(path.join(t_dir, "bin.py"), Buffer.concat([Buffer.from("a\0b"), Buffer.alloc(64)]));
+
+    const t_attach = collectScriptAttachments(
+      "python safe.py && python big.py && python bin.py && python missing.py",
+      t_dir,
+      { script_max_bytes: 100 },
+    );
+    assert.equal(t_attach.files.length, 2, "可读文本文件 2 个（二进制的 bin.py 被跳过）");
+    assert.equal(t_attach.files[0].path, path.join(t_dir, "safe.py"), "相对路径按 cwd 解析为绝对路径");
+    assert.equal(t_attach.files[0].content, "print('ok')");
+    assert.equal(t_attach.files[1].truncated, true, "超限文件应截断");
+    assert.ok(t_attach.files[1].content.length <= 100, "截断后内容不超上限");
+    assert.equal(t_attach.files[1].total_bytes, 5000, "记录原始大小");
+    assert.ok(t_attach.notes.some((t_note) => t_note.includes("bin.py") && t_note.includes("二进制")), "二进制文件跳过并附注");
+    assert.ok(t_attach.notes.some((t_note) => t_note.includes("missing.py") && t_note.includes("无法读取")), "缺失文件附注");
+  } finally {
+    fs.rmSync(t_dir, { recursive: true, force: true });
+  }
+});
+
+test("reviewer: collectScriptAttachments 文件数上限与无引用短路", () => {
+  const t_dir = fs.mkdtempSync(path.join(os.tmpdir(), "auto-review-script-"));
+  try {
+    for (const t_name of ["a.py", "b.py", "c.py", "d.py"]) {
+      fs.writeFileSync(path.join(t_dir, t_name), "pass");
+    }
+    const t_attach = collectScriptAttachments("python a.py && python b.py && python c.py && python d.py", t_dir, { script_max_bytes: 1000 });
+    assert.equal(t_attach.files.length, 3, "最多附加 3 个文件");
+    assert.ok(t_attach.notes.some((t_note) => t_note.includes("超过 3 个")), "超限附注");
+    assert.equal(collectScriptAttachments("node --version", t_dir, { script_max_bytes: 1000 }), null, "无引用返回 null");
+  } finally {
+    fs.rmSync(t_dir, { recursive: true, force: true });
+  }
+});
+
+test("reviewer: buildReviewPayload 附件块与无附件兼容", () => {
+  const t_plain = buildReviewPayload("Bash", { command: "ls" }, 8000);
+  assert.equal(t_plain, '审查以下工具调用，只输出结论 JSON：\n{"tool_name":"Bash","tool_input":{"command":"ls"}}', "无附件保持旧格式");
+
+  const t_attach = {
+    files: [{ path: "D:/app/a.py", content: "print('x')", truncated: false, total_bytes: 10 }],
+    notes: ["b.py: 无法读取，未附加"],
+  };
+  const t_payload = buildReviewPayload("Bash", { command: "python a.py" }, 8000, t_attach);
+  assert.ok(t_payload.includes("命令引用的脚本文件内容"), "附件块标题");
+  assert.ok(t_payload.includes("D:/app/a.py"));
+  assert.ok(t_payload.includes("print('x')"));
+  assert.ok(t_payload.includes("10 字节"), "大小标注");
+  assert.ok(t_payload.includes("(附注) b.py: 无法读取，未附加"), "附注行");
+});
+
+test("reviewer: computeCacheKey 附件加盐与旧键兼容", async () => {
+  const { createHash } = await import("node:crypto");
+  // 无加盐串时与旧版公式完全一致：历史缓存/白名单条目不受升级影响
+  const t_legacy = createHash("sha256").update('Bash\n{"command":"python a.py"}').digest("hex");
+  assert.equal(computeCacheKey("Bash", { command: "python a.py" }), t_legacy);
+  assert.equal(computeCacheKey("Bash", { command: "python a.py" }, ""), t_legacy);
+
+  const t_attach_a = { files: [{ path: "a.py", content: "v1", truncated: false, total_bytes: 2 }], notes: [] };
+  const t_attach_b = { files: [{ path: "a.py", content: "v2", truncated: false, total_bytes: 2 }], notes: [] };
+  const t_key_a = computeCacheKey("Bash", { command: "python a.py" }, hashAttachments(t_attach_a));
+  const t_key_b = computeCacheKey("Bash", { command: "python a.py" }, hashAttachments(t_attach_b));
+  assert.notEqual(t_key_a, t_legacy, "有附件时键必须与旧键不同");
+  assert.notEqual(t_key_a, t_key_b, "脚本内容变化缓存键必须变化");
+  assert.equal(hashAttachments(null), "", "空附件加盐串为空");
 });
 
 test("收尾: 清理临时目录", () => {

@@ -1,17 +1,19 @@
 /**
- * 模块功能: 八场景固定测试——手工验收场景的自动化回归（放行/转审核/脚本/规则三态/复合命令）
+ * 模块功能: 场景固定测试——手工验收场景的自动化回归（放行/转审核/脚本/规则三态/复合命令/脚本送审）
  * 作者: hh-zyb
  * 创建日期: 2026年08月29日
- * 描述: 复现 8 条手工验收路径并固化为可重复执行的断言：
+ * 描述: 复现手工验收路径并固化为可重复执行的断言：
  *       场景1-3 走 LLM 审查层，由本地假 provider 服务（openai 协议）按命令关键字
  *       返回预置结论，离线固化"安全放行 / 危险转审核 / 脚本转审核"的管线行为；
  *       场景4-8 走危险规则层，断言 deny/ask/allow 三态与复合命令逐段拆分匹配，
  *       并以 LLM 请求次数为 0 锚定"规则层不经过 LLM"的承诺；
+ *       场景9-12 会话白名单、13-14 fallback provider、15-18 脚本内容随命令送审
+ *       （inspect_scripts 开关、附件块入载荷、脚本内容变化缓存失效）；
  *       另附两条防回归锚定：白名单开头的复合命令藏危险段必须降级 LLM、
  *       LLM 幻觉 deny 收敛为 ask。
  *       环境变量必须在 import 业务模块之前设置（common.js 在加载期固化路径）
  * 依赖: node:test node:assert node:fs node:http node:os node:path ../src/*
- * 更新日期: 2026年08月29日
+ * 更新日期: 2026年09月05日
  */
 
 import test from "node:test";
@@ -50,6 +52,9 @@ const DEFAULT_VERDICT = { decision: "allow", risk_level: "low", analysis: "命�
 // 假 LLM 服务收到的请求计数：规则层场景必须为 0，锚定"规则层不经过 LLM"
 let g_llm_request_count = 0;
 
+// 最近一次收到的送审载荷全文：脚本送审用例据此断言附件块确实进入载荷
+let g_last_payload = "";
+
 // 假 LLM 服务（openai chat/completions 协议）：解析载荷中的命令，按关键字回预置结论
 const t_fake_llm = http.createServer((t_req, t_res) => {
   const t_chunks = [];
@@ -59,6 +64,7 @@ const t_fake_llm = http.createServer((t_req, t_res) => {
     const t_body = JSON.parse(Buffer.concat(t_chunks).toString("utf8"));
     const t_user_msg = (t_body.messages || []).find((t_m) => t_m.role === "user");
     const t_payload = String((t_user_msg && t_user_msg.content) || "");
+    g_last_payload = t_payload;
     const t_hit = LLM_VERDICT_BY_KEYWORD.find((t_item) => t_payload.includes(t_item.keyword));
     const t_verdict = t_hit ? t_hit.verdict : DEFAULT_VERDICT;
     t_res.writeHead(200, { "content-type": "application/json" });
@@ -119,12 +125,13 @@ function writeRules(rules) {
 }
 
 /**
- * 函数功能: 以 hook 输入形态执行一次审查，并重置 LLM 请求计数便于逐用例断言
+ * 函数功能: 以 hook 输入形态执行一次审查，并重置 LLM 请求计数与载荷捕获便于逐用例断言
  * @param {string} command - 被审查的 Bash 命令
  * @returns {Promise<{action: string, reason: string, source: string}>} 决策对象
  */
 async function reviewCommand(command) {
   g_llm_request_count = 0;
+  g_last_payload = "";
   return reviewToolUse({ tool_name: "Bash", tool_input: { command } });
 }
 
@@ -315,6 +322,94 @@ test("场景14: 主与 fallback 均不可用——兜底转人工，reason 汇�
   assert.equal(g_llm_request_count, 0, "两个 provider 都不可达，假服务收不到请求");
 });
 
+// ─── 场景15-18: 脚本内容随命令送审（inspect_scripts，附件块 + 缓存加盐）───
+
+// 真实脚本文件目录：safe.py 内容安全；danger.py 内容含 "rm -rf" 关键字（假 LLM 据载荷内文本判定）
+const t_script_dir = fs.mkdtempSync(path.join(os.tmpdir(), "auto-review-scripts-"));
+const SAFE_PY = "print('hello scenario')";
+const DANGER_PY = "import os\nos.system('rm -rf D:/scenario-data')\n";
+fs.writeFileSync(path.join(t_script_dir, "safe.py"), SAFE_PY);
+fs.writeFileSync(path.join(t_script_dir, "danger.py"), DANGER_PY);
+
+test("场景15: 脚本送审开启——危险脚本内容进入载荷并按内容转审核", async () => {
+  writeRules([]);
+  const t_settings = loadSettings();
+  t_settings.provider = "fake-llm";
+  t_settings.model = "fake-model";
+  t_settings.fallback_provider = "";
+  t_settings.cache_ttl_seconds = 0;
+  t_settings.inspect_scripts = true;
+  saveSettings(t_settings);
+  const t_decision = await reviewCommand(`python ${t_script_dir}/danger.py`);
+  assert.equal(t_decision.action, "ask", "脚本内容含 rm -rf，假 LLM 按载荷内文本判 ask");
+  assert.equal(t_decision.source, "llm");
+  assert.ok(g_last_payload.includes("命令引用的脚本文件内容"), "载荷含附件块标题");
+  assert.ok(g_last_payload.includes(DANGER_PY.trim()), "脚本实际内容进入载荷");
+  assert.equal(g_llm_request_count, 1);
+});
+
+test("场景16: 脚本送审开启——相对路径按 hook 输入 cwd 解析，安全脚本放行", async () => {
+  writeRules([]);
+  g_llm_request_count = 0;
+  g_last_payload = "";
+  const t_decision = await reviewToolUse({ tool_name: "Bash", tool_input: { command: "python safe.py" }, cwd: t_script_dir });
+  assert.equal(t_decision.action, "allow");
+  assert.equal(t_decision.source, "llm");
+  assert.ok(g_last_payload.includes(SAFE_PY), "相对路径解析正确且内容入载荷");
+  assert.equal(g_llm_request_count, 1);
+});
+
+test("场景17: 脚本送审关闭——载荷不含脚本内容，行为与旧版一致", async () => {
+  writeRules([]);
+  const t_settings = loadSettings();
+  t_settings.inspect_scripts = false;
+  saveSettings(t_settings);
+  const t_decision = await reviewCommand(`python ${t_script_dir}/danger.py`);
+  assert.equal(t_decision.action, "allow", "命令文本本身无危险关键字，按命令判 allow");
+  assert.equal(t_decision.source, "llm");
+  assert.equal(g_last_payload.includes(DANGER_PY.trim()), false, "脚本内容不得进入载荷");
+  assert.equal(g_last_payload.includes("命令引用的脚本文件内容"), false, "不得出现附件块");
+  assert.equal(g_llm_request_count, 1);
+});
+
+test("场景18: 缓存加盐——脚本内容变化后同命令重新送审，内容不变复用缓存", async () => {
+  writeRules([]);
+  const t_settings = loadSettings();
+  t_settings.inspect_scripts = true;
+  t_settings.cache_ttl_seconds = 3600;
+  saveSettings(t_settings);
+
+  const t_first = await reviewCommand(`python ${t_script_dir}/safe.py`);
+  assert.equal(t_first.action, "allow");
+  assert.equal(g_llm_request_count, 1, "首次送审");
+
+  // 同命令同内容：缓存命中，不再请求 LLM
+  const t_second = await reviewCommand(`python ${t_script_dir}/safe.py`);
+  assert.equal(t_second.action, "allow");
+  assert.equal(t_second.source, "cache");
+  assert.equal(g_llm_request_count, 0, "内容未变应复用缓存");
+
+  // 脚本内容改为危险：附件摘要变化 → 缓存键变化 → 重新送审并按新内容判 ask
+  fs.writeFileSync(path.join(t_script_dir, "safe.py"), DANGER_PY);
+  const t_third = await reviewCommand(`python ${t_script_dir}/safe.py`);
+  assert.equal(t_third.action, "ask", "内容变化必须重新审查");
+  assert.equal(g_llm_request_count, 1, "缓存应失效");
+
+  // 新内容再次执行：重新入缓存后复用
+  const t_fourth = await reviewCommand(`python ${t_script_dir}/safe.py`);
+  assert.equal(t_fourth.action, "ask");
+  assert.equal(t_fourth.source, "cache");
+  assert.equal(g_llm_request_count, 0);
+
+  // 还原环境，避免影响后续用例
+  fs.writeFileSync(path.join(t_script_dir, "safe.py"), SAFE_PY);
+  const t_restore = loadSettings();
+  t_restore.cache_ttl_seconds = 0;
+  t_restore.inspect_scripts = false;
+  saveSettings(t_restore);
+});
+
 test.after(() => {
   t_fake_llm.close();
+  fs.rmSync(t_script_dir, { recursive: true, force: true });
 });

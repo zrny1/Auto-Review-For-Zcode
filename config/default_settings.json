@@ -8,5 +8,7 @@
   "timeout_ms": 30000,
   "cache_ttl_seconds": 3600,
   "max_payload_chars": 8000,
+  "inspect_scripts": false,
+  "script_max_bytes": 16000,
   "dialog_on_ask": false
 }

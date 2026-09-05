@@ -3,16 +3,20 @@
  * 作者: hh-zyb
  * 创建日期: 2026年08月29日
  * 描述: 管线顺序固定"先确定性后概率性"：总开关 → 工具过滤 → 危险规则层（不经过 LLM）
- *       → 会话白名单（本次对话允许过）→ 缓存层 → 安全子 agent（LLM）→ 失败兜底 ask；
- *       任何一层异常只会让决策更保守，不存在"出错导致放行"的路径
+ *       → 会话白名单（本次对话允许过）→ 脚本内容附加（可选）→ 缓存层 → 安全子 agent（LLM）
+ *       → 失败兜底 ask；任何一层异常只会让决策更保守，不存在"出错导致放行"的路径
  * 功能:
  *   - reviewToolUse: 主入口，输入 hook JSON，输出 {action, reason, source}
  *   - 规则匹配、会话白名单、缓存读写、LLM 载荷构造、输出解析与 reason 拼装
- * 依赖: node:crypto ./common.js ./settings.js ./provider.js
- * 更新日期: 2026年08月31日
+ *   - 脚本内容附加：提取 Bash 命令引用的脚本文件并读取内容随载荷送审（inspect_scripts）
+ * 依赖: node:crypto node:fs node:os node:path ./common.js ./settings.js ./provider.js
+ * 更新日期: 2026年09月05日
  */
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { CACHE_FILE, SESSION_ALLOWLIST_FILE, logWrite, readJsonFile, writeFileAtomic } from "./common.js";
 import { loadSettings, loadDangerRules, loadSecurityPrompt } from "./settings.js";
@@ -34,6 +38,18 @@ const SESSION_FALLBACK_ID = "_default";
 
 // 日志中命令预览长度，避免单行日志过长
 const LOG_PREVIEW_CHARS = 120;
+
+// 脚本送审的单次命令最多附加文件数：控制载荷规模，超出部分以附注说明
+const MAX_SCRIPT_FILES = 3;
+
+// 视为"脚本文件"的扩展名集合：解释器调用与裸路径执行都要求命中，防止误读普通数据文件
+const SCRIPT_EXTENSIONS = new Set(["sh", "bash", "py", "pyw", "js", "mjs", "cjs", "ts", "rb", "pl", "ps1", "bat", "cmd"]);
+
+// 命中即放弃该命令段的脚本提取：-c/-e 的代码已内联在命令文本里，-m 引用的是模块而非文件路径
+const SCRIPT_INLINE_FLAGS = new Set(["-c", "-e", "-m", "--command", "--eval", "--module"]);
+
+// 可带脚本文件参数的解释器名单（powershell 走 -File 特判，cmd 走 /c、/k 特判）
+const SCRIPT_INTERPRETERS = new Set(["python", "python3", "py", "node", "deno", "bun", "bash", "sh", "zsh", "dash", "ruby", "perl", "pwsh"]);
 
 /**
  * 函数功能: 归一化工具名（处理 matcher 别名）
@@ -188,6 +204,229 @@ function splitTopLevelCommands(text) {
 }
 
 /**
+ * 函数功能: 把单段命令按空白切分为 token（引号内的空白不切分，引号本身剥离）
+ * @param {string} segment - 单段命令文本
+ * @returns {string[]} token 列表
+ */
+function tokenizeSegment(segment) {
+  const t_tokens = [];
+  let t_cur = "";
+  let t_quote = "";
+  for (const t_ch of String(segment || "")) {
+    if (t_quote) {
+      if (t_ch === t_quote) {
+        t_quote = "";
+      } else {
+        t_cur += t_ch;
+      }
+      continue;
+    }
+    if (t_ch === "'" || t_ch === '"') {
+      t_quote = t_ch;
+      continue;
+    }
+    if (/\s/.test(t_ch)) {
+      if (t_cur) {
+        t_tokens.push(t_cur);
+        t_cur = "";
+      }
+      continue;
+    }
+    t_cur += t_ch;
+  }
+  if (t_cur) {
+    t_tokens.push(t_cur);
+  }
+  return t_tokens;
+}
+
+/**
+ * 函数功能: 判断 token 是否为已知扩展名的脚本文件路径
+ * @param {string} token - 命令中的单个 token
+ * @returns {boolean} 是否脚本路径
+ */
+function isScriptPath(token) {
+  const t_clean = String(token || "").trim();
+  const t_dot = t_clean.lastIndexOf(".");
+  if (t_dot <= 0) {
+    return false;
+  }
+  return SCRIPT_EXTENSIONS.has(t_clean.slice(t_dot + 1).toLowerCase());
+}
+
+/**
+ * 函数功能: 从单段命令的 token 序列中提取脚本文件引用
+ * @param {string[]} tokens - tokenizeSegment 的输出
+ * @returns {string|null} 脚本路径引用（原始文本），无匹配返回 null
+ */
+function extractRefFromSegment(tokens) {
+  const t_head = String(tokens[0] || "").toLowerCase();
+  // powershell/pwsh 的 -File <path>：显式脚本入口
+  if (t_head === "powershell" || t_head === "pwsh") {
+    for (let t_i = 1; t_i < tokens.length - 1; t_i++) {
+      if (tokens[t_i].toLowerCase() === "-file" && isScriptPath(tokens[t_i + 1])) {
+        return tokens[t_i + 1];
+      }
+    }
+    return null;
+  }
+  // cmd 的 /c、/k <path>：批处理入口
+  if (t_head === "cmd") {
+    for (let t_i = 1; t_i < tokens.length - 1; t_i++) {
+      const t_flag = tokens[t_i].toLowerCase();
+      if ((t_flag === "/c" || t_flag === "/k") && isScriptPath(tokens[t_i + 1])) {
+        return tokens[t_i + 1];
+      }
+    }
+    return null;
+  }
+  // 裸脚本路径执行（./x.sh、x.py 直接作为段首命令）
+  if (isScriptPath(tokens[0])) {
+    return tokens[0];
+  }
+  // 解释器调用：跳过选项，取第一个非选项 token；内联/模块标志出现则整段放弃
+  if (SCRIPT_INTERPRETERS.has(t_head)) {
+    for (let t_i = 1; t_i < tokens.length; t_i++) {
+      const t_token = tokens[t_i];
+      const t_lower = t_token.toLowerCase();
+      if (t_token.startsWith("-")) {
+        if (SCRIPT_INLINE_FLAGS.has(t_lower) || SCRIPT_INLINE_FLAGS.has(t_lower.split("=")[0])) {
+          return null;
+        }
+        continue;
+      }
+      return isScriptPath(t_token) ? t_token : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * 函数功能: 从 Bash 命令全文中提取全部脚本文件引用（复合命令逐段提取、去重、保持顺序）
+ * @param {string} command - 命令全文
+ * @returns {string[]} 脚本路径引用列表（原始文本）
+ */
+function extractScriptRefs(command) {
+  const t_refs = [];
+  const t_seen = new Set();
+  for (const t_segment of splitTopLevelCommands(String(command || ""))) {
+    const t_tokens = tokenizeSegment(t_segment);
+    if (t_tokens.length === 0) {
+      continue;
+    }
+    const t_ref = extractRefFromSegment(t_tokens);
+    if (t_ref && !t_seen.has(t_ref)) {
+      t_seen.add(t_ref);
+      t_refs.push(t_ref);
+    }
+  }
+  return t_refs;
+}
+
+/**
+ * 函数功能: 展开 ~ 前缀为用户主目录（跨平台），其余路径原样返回
+ * @param {string} ref - 命令中的路径引用
+ * @returns {string} 展开后的路径
+ */
+function expandTilde(ref) {
+  if (ref === "~") {
+    return os.homedir();
+  }
+  if (ref.startsWith("~/") || ref.startsWith("~\\")) {
+    return path.join(os.homedir(), ref.slice(2));
+  }
+  return ref;
+}
+
+/**
+ * 函数功能: 读取命令引用的脚本文件内容，构造送审附件（任何失败只降级为"不附加该文件"）
+ * @param {string} command - Bash 命令全文
+ * @param {string} cwd - 相对路径的解析基准目录（hook 输入的 cwd 回落进程 cwd）
+ * @param {object} settings - 运行时配置（script_max_bytes 已在加载时钳制）
+ * @returns {{files: Array<{ref: string, path: string, content: string, truncated: boolean, total_bytes: number}>, notes: string[]}|null}
+ *          附件对象；无任何引用或整体异常返回 null
+ */
+function collectScriptAttachments(command, cwd, settings) {
+  try {
+    const t_refs = extractScriptRefs(command);
+    if (t_refs.length === 0) {
+      return null;
+    }
+    const t_max_bytes = Math.max(1, Number(settings && settings.script_max_bytes) || 16000);
+    const t_base_dir = String(cwd || "").trim() || process.cwd();
+    const t_files = [];
+    const t_notes = [];
+    for (const t_ref of t_refs) {
+      if (t_files.length >= MAX_SCRIPT_FILES) {
+        t_notes.push(`引用脚本超过 ${MAX_SCRIPT_FILES} 个，其余未附加`);
+        break;
+      }
+      const t_full = path.resolve(t_base_dir, expandTilde(t_ref));
+      try {
+        const t_stat = fs.statSync(t_full);
+        if (!t_stat.isFile()) {
+          t_notes.push(`${t_ref}: 非普通文件，未附加`);
+          continue;
+        }
+        let t_content;
+        let t_truncated = false;
+        if (t_stat.size > t_max_bytes) {
+          const t_fd = fs.openSync(t_full, "r");
+          try {
+            const t_buf = Buffer.alloc(t_max_bytes);
+            const t_read = fs.readSync(t_fd, t_buf, 0, t_max_bytes, 0);
+            t_content = t_buf.subarray(0, t_read).toString("utf8");
+          } finally {
+            fs.closeSync(t_fd);
+          }
+          t_truncated = true;
+        } else {
+          t_content = fs.readFileSync(t_full, "utf8");
+        }
+        // 二进制内容对审查无意义且浪费载荷：NUL 字节在前 8K 出现即跳过
+        if (t_content.slice(0, 8192).includes("\0")) {
+          t_notes.push(`${t_ref}: 二进制文件，未附加`);
+          continue;
+        }
+        t_files.push({ ref: t_ref, path: t_full, content: t_content, truncated: t_truncated, total_bytes: t_stat.size });
+      } catch (t_error) {
+        // 详细原因进日志即可，给 LLM 的附注不携带本机错误细节
+        logWrite("WARN", "script", `读取脚本失败 ${t_ref}: ${t_error.message}`);
+        t_notes.push(`${t_ref}: 无法读取，未附加`);
+      }
+    }
+    if (t_files.length === 0 && t_notes.length === 0) {
+      return null;
+    }
+    logWrite("INFO", "script", `脚本送审 ${t_files.length} 个文件: ${t_files.map((t_f) => t_f.ref).join("、").slice(0, LOG_PREVIEW_CHARS) || "(全部失败)"}`);
+    return { files: t_files, notes: t_notes };
+  } catch (t_error) {
+    // 附加功能自身故障绝不影响决策：按无附件继续走原管线
+    logWrite("WARN", "script", `脚本附加异常: ${t_error.message}`);
+    return null;
+  }
+}
+
+/**
+ * 函数功能: 计算附件的缓存加盐串（文件路径 + 内容摘要 + 附注），空附件返回空串
+ * @param {object|null} attachments - collectScriptAttachments 的返回值
+ * @returns {string} 加盐串
+ */
+function hashAttachments(attachments) {
+  if (!attachments) {
+    return "";
+  }
+  const t_parts = [];
+  for (const t_file of attachments.files || []) {
+    t_parts.push(`${t_file.path}:${createHash("sha256").update(t_file.content).digest("hex")}`);
+  }
+  for (const t_note of attachments.notes || []) {
+    t_parts.push(`note:${t_note}`);
+  }
+  return t_parts.join("|");
+}
+
+/**
  * 函数功能: 复合命令的逐段规则审查——每段独立匹配，任一段命中 deny/ask 即整体生效，
  *           全部段命中 allow 才整体放行，其余情况返回 null 降级 LLM 审查完整命令。
  *           防止 allow 规则（如 ^ls\\b）放行 "ls; rm -rf x" 这类以白名单命令开头的复合命令
@@ -246,10 +485,12 @@ function stableStringify(value) {
  * 函数功能: 计算缓存键
  * @param {string} tool_name - 标准工具名
  * @param {object} tool_input - 工具调用参数
+ * @param {string} [extra_salt] - 附加加盐串（如脚本附件摘要）；空串时与旧版键完全一致
  * @returns {string} sha256 十六进制摘要
  */
-function computeCacheKey(tool_name, tool_input) {
-  return createHash("sha256").update(`${tool_name}\n${stableStringify(tool_input)}`).digest("hex");
+function computeCacheKey(tool_name, tool_input, extra_salt = "") {
+  const t_base = `${tool_name}\n${stableStringify(tool_input)}`;
+  return createHash("sha256").update(extra_salt ? `${t_base}\n${extra_salt}` : t_base).digest("hex");
 }
 
 /**
@@ -489,18 +730,36 @@ function formatVerdictReason(verdict) {
 }
 
 /**
- * 函数功能: 构造送审载荷（截断保护）
+ * 函数功能: 构造送审载荷（截断保护 + 可选脚本附件块）
  * @param {string} tool_name - 标准工具名
  * @param {object} tool_input - 工具调用参数
- * @param {number} max_chars - 截断上限
+ * @param {number} max_chars - 工具调用 JSON 的截断上限（附件块预算独立，不受此值约束）
+ * @param {object|null} [attachments] - collectScriptAttachments 的返回值
  * @returns {string} 审查载荷文本
  */
-function buildReviewPayload(tool_name, tool_input, max_chars) {
+function buildReviewPayload(tool_name, tool_input, max_chars, attachments) {
   let t_json = JSON.stringify({ tool_name, tool_input });
   if (t_json.length > max_chars) {
     t_json = t_json.slice(0, max_chars) + `…(已截断，原文 ${t_json.length} 字符)`;
   }
-  return `审查以下工具调用，只输出结论 JSON：\n${t_json}`;
+  let t_payload = `审查以下工具调用，只输出结论 JSON：\n${t_json}`;
+  if (attachments && ((attachments.files && attachments.files.length > 0) || (attachments.notes && attachments.notes.length > 0))) {
+    const t_sections = ["", "── 命令引用的脚本文件内容（auto-review 自动读取附上，结论必须结合脚本实际内容）──"];
+    for (const [t_index, t_file] of attachments.files.entries()) {
+      const t_size_note = t_file.truncated
+        ? `已截断至前 ${t_file.content.length} 字符（原文 ${t_file.total_bytes} 字节）`
+        : `${t_file.total_bytes} 字节`;
+      t_sections.push(`[${t_index + 1}] ${t_file.path}（${t_size_note}）`);
+      t_sections.push("```");
+      t_sections.push(t_file.content);
+      t_sections.push("```");
+    }
+    for (const t_note of attachments.notes) {
+      t_sections.push(`(附注) ${t_note}`);
+    }
+    t_payload += "\n" + t_sections.join("\n");
+  }
+  return t_payload;
 }
 
 /**
@@ -509,12 +768,15 @@ function buildReviewPayload(tool_name, tool_input, max_chars) {
  * @param {string} tool_name - 标准工具名
  * @param {object} tool_input - 工具调用参数
  * @param {object} settings - 运行时配置（provider/fallback_provider 等）
+ * @param {object|null} [attachments] - 脚本附件（参与载荷与缓存键）
  * @returns {Promise<{action: string, reason: string}>} 决策对象
  * @throws {LlmError} 所有 provider 均失败时抛出汇总原因
  */
-async function runLlmReview(tool_name, tool_input, settings) {
+async function runLlmReview(tool_name, tool_input, settings, attachments) {
   const t_prompt = loadSecurityPrompt();
-  const t_payload = buildReviewPayload(tool_name, tool_input, settings.max_payload_chars);
+  const t_payload = buildReviewPayload(tool_name, tool_input, settings.max_payload_chars, attachments);
+  const t_cache_key = computeCacheKey(tool_name, tool_input, hashAttachments(attachments));
+  const t_script_note = attachments && attachments.files.length > 0 ? ` scripts=${attachments.files.length}` : "";
 
   // 主 provider 失败自动切换 fallback；解析/调用/输出解析任一失败都视为该 provider 不可用。
   // 未配置 fallback 时仅单次尝试，行为与旧版一致。
@@ -539,9 +801,10 @@ async function runLlmReview(tool_name, tool_input, settings) {
       } else {
         t_reason = formatVerdictReason(t_verdict);
       }
-      logWrite("INFO", "llm", `${t_verdict.decision} risk=${t_verdict.risk_level} ${t_duration_s}s (${t_attempt.label})`);
-      // 只有 LLM 结论入缓存（规则层是即时的，且规则变更后旧缓存可能失效）
-      writeCachedDecision(computeCacheKey(tool_name, tool_input), { action: t_verdict.decision, reason: t_reason }, settings.cache_ttl_seconds);
+      logWrite("INFO", "llm", `${t_verdict.decision} risk=${t_verdict.risk_level} ${t_duration_s}s${t_script_note} (${t_attempt.label})`);
+      // 只有 LLM 结论入缓存（规则层是即时的，且规则变更后旧缓存可能失效）；
+      // 缓存键含脚本附件摘要——脚本内容变更后旧结论自动失效重新审查
+      writeCachedDecision(t_cache_key, { action: t_verdict.decision, reason: t_reason }, settings.cache_ttl_seconds);
       // ask 决策双发：reason 给客户端 deny/升级路径，additionalContext 保证分析进入主 agent 上下文
       const t_extra = t_verdict.decision === ACTION_ASK ? { additionalContext: t_reason } : {};
       return { action: t_verdict.decision, reason: t_reason, ...t_extra };
@@ -609,14 +872,22 @@ async function reviewToolUseInner(hook_input) {
 
     // ③'' 会话白名单：用户对完全相同的指令点过"本次对话允许"即放行。
     //     位于规则层之后——deny/ask 等持久规则永远优先于对话框的临时放行，
-    //     防止早先放行过的复合命令绕过之后新增的子命令拦截规则
+    //     防止早先放行过的复合命令绕过之后新增的子命令拦截规则；
+    //     白名单键不含脚本附件——用户批准的是命令本身
     if (matchSessionAllowlist(hook_input && hook_input.session_id, t_tool_name, t_tool_input)) {
       logWrite("INFO", "session", `allow ${t_tool_name}: ${t_short} (会话白名单)`);
       return { action: ACTION_ALLOW, reason: "[auto-review] 会话白名单放行：该指令你已在本次对话中允许过。", source: "session" };
     }
 
+    // ③.5 脚本内容附加：读取命令引用的脚本文件随载荷送审（相对路径按 hook 输入的 cwd 解析）。
+    //     放在白名单之后（临时放行不因脚本内容变化失效）、缓存之前（附件摘要参与缓存键）
+    let t_attachments = null;
+    if (t_tool_name === "Bash" && t_settings.inspect_scripts) {
+      t_attachments = collectScriptAttachments(t_rule_text, String((hook_input && hook_input.cwd) || ""), t_settings);
+    }
+
     // ④ 缓存层：相同调用短期内复用结论，降低延迟与 token 消耗
-    const t_cache_key = computeCacheKey(t_tool_name, t_tool_input);
+    const t_cache_key = computeCacheKey(t_tool_name, t_tool_input, hashAttachments(t_attachments));
     const t_cached = readCachedDecision(t_cache_key, t_settings.cache_ttl_seconds);
     if (t_cached) {
       logWrite("INFO", "cache", `${t_cached.action} ${t_tool_name}: ${t_short}`);
@@ -626,7 +897,7 @@ async function reviewToolUseInner(hook_input) {
     }
 
     // ⑤ 安全子 agent（LLM）审查
-    const t_llm_decision = await runLlmReview(t_tool_name, t_tool_input, t_settings);
+    const t_llm_decision = await runLlmReview(t_tool_name, t_tool_input, t_settings, t_attachments);
     return { ...t_llm_decision, source: "llm" };
   } catch (t_error) {
     // ⑥ 总兜底：任何异常（provider 不可用 / 超时 / 输出不可解析）一律转人工，绝不在错误时放行
@@ -654,6 +925,9 @@ export {
   clearSessionAllowlist,
   listSessionAllowlist,
   splitTopLevelCommands,
+  extractScriptRefs,
+  collectScriptAttachments,
+  hashAttachments,
   stableStringify,
   computeCacheKey,
   readCachedDecision,
@@ -661,4 +935,5 @@ export {
   extractJsonObject,
   parseVerdict,
   formatVerdictReason,
+  buildReviewPayload,
 };

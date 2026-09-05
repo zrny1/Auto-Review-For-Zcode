@@ -6,12 +6,12 @@
  *       避免模型手改 JSON 出错；本脚本独立于 hook 协议，stdout 面向命令输出可读文本
  * 功能:
  *   - init: 把出厂默认配置物化到数据目录（不覆盖已有文件）
- *   - status / set: 运行时配置查看与修改（键与类型校验）
+ *   - status / set: 运行时配置查看与修改（键与类型校验，含脚本送审开关）
  *   - rules list|add|remove|test: 危险规则表管理
  *   - prompt show|path|reset: 安全提示词查看/定位/恢复默认
  *   - session list|clear: 会话白名单（"本次对话允许"）查看与清空
  * 依赖: node:fs node:path ./common.js ./settings.js ./reviewer.js ./gui.js
- * 更新日期: 2026年08月31日
+ * 更新日期: 2026年09月05日
  */
 
 import fs from "node:fs";
@@ -41,6 +41,8 @@ const SETTABLE_KEYS = {
   timeout_ms: "int",
   cache_ttl_seconds: "int",
   max_payload_chars: "int",
+  inspect_scripts: "boolean",
+  script_max_bytes: "int",
   dialog_on_ask: "boolean",
 };
 
@@ -49,6 +51,7 @@ const NUMBER_RANGES = {
   timeout_ms: [5000, 45000],
   cache_ttl_seconds: [0, 86400],
   max_payload_chars: [500, 100000],
+  script_max_bytes: [1000, 100000],
 };
 
 /**
@@ -89,6 +92,7 @@ function cmdStatus() {
   console.log(`timeout_ms: ${t_settings.timeout_ms}`);
   console.log(`cache_ttl_seconds: ${t_settings.cache_ttl_seconds}`);
   console.log(`max_payload_chars: ${t_settings.max_payload_chars}`);
+  console.log(`inspect_scripts: ${t_settings.inspect_scripts}${t_settings.inspect_scripts ? `（单文件上限 ${t_settings.script_max_bytes} 字节）` : "（脚本内容不随载荷送审）"}`);
   console.log(`危险规则条数: ${t_rules.length}`);
   console.log(`提示词: ${fs.existsSync(SECURITY_PROMPT_FILE()) ? "已自定义" : "出厂默认"}`);
 }
