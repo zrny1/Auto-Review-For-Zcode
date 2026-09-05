@@ -267,7 +267,7 @@ $bPrompt.Add_Click({
   $ph=Lbl '安全子 agent 系统提示词全文（保存后立即生效；输出契约 JSON 字段名不可改动）' '#9D9D9D' 8.25 ([System.Drawing.FontStyle]::Regular)
   $ph.Location=New-Object System.Drawing.Point(26,16)
   $txPrompt=New-Object System.Windows.Forms.TextBox
-  $txPrompt.Multiline=$true; $txPrompt.ScrollBars='Both'; $txPrompt.WordWrap=$false
+  $txPrompt.Multiline=$true; $txPrompt.ScrollBars='Vertical'; $txPrompt.WordWrap=$true
   $txPrompt.BackColor=C '#252526'; $txPrompt.ForeColor=C '#D4D4D4'; $txPrompt.BorderStyle='FixedSingle'
   $txPrompt.Font=New-Object System.Drawing.Font('Consolas',9.75)
   $txPrompt.Location=New-Object System.Drawing.Point(26,42); $txPrompt.Size=New-Object System.Drawing.Size(748,492)

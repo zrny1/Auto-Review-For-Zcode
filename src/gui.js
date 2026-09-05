@@ -334,7 +334,10 @@ const GUI_PS_SCRIPT = [
 "  $ph=Lbl '安全子 agent 系统提示词全文（保存后立即生效；输出契约 JSON 字段名不可改动）' '" + THEME.textDim + "' 8.25 ([System.Drawing.FontStyle]::Regular)",
 "  $ph.Location=New-Object System.Drawing.Point(26,16)",
 "  $txPrompt=New-Object System.Windows.Forms.TextBox",
-"  $txPrompt.Multiline=$true; $txPrompt.ScrollBars='Both'; $txPrompt.WordWrap=$false",
+  // 折行 + 仅纵向滚动：不折行的长行（提示词含超长 JSON 契约行）会把横向滚动范围撑到
+  // 数倍于框宽（超长滚动条、内容与框宽不匹配），部分环境控件还会随内容增宽；折行后
+  // 文本恒在框内显示，宽度始终与编辑框一致
+  "  $txPrompt.Multiline=$true; $txPrompt.ScrollBars='Vertical'; $txPrompt.WordWrap=$true",
 "  $txPrompt.BackColor=C '" + THEME.panel + "'; $txPrompt.ForeColor=C '" + THEME.text + "'; $txPrompt.BorderStyle='FixedSingle'",
 "  $txPrompt.Font=New-Object System.Drawing.Font('Consolas',9.75)",
 "  $txPrompt.Location=New-Object System.Drawing.Point(26,42); $txPrompt.Size=New-Object System.Drawing.Size(748,492)",
