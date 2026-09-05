@@ -2,17 +2,18 @@
 
 > 在 ZCode 现有权限模式之上模拟"自动审查"：主 agent 保持自动编辑模式，由一个**上下文干净的安全子 agent**（PreToolUse hook + LLM）审查权限外的请求——安全的自动放行，不安全的在**插件审查对话框**中携带分析、风险点、影响范围由用户裁决。
 
-作者: hh-zyb ｜ 版本: 0.2.0 ｜ 技术栈: Node.js ≥ 18（零第三方依赖，GUI 为 PowerShell WinForms）｜ License: MIT
+作者: hh-zyb ｜ 版本: 0.2.3 ｜ 技术栈: Node.js ≥ 18（零第三方依赖，GUI 为 PowerShell WinForms）｜ License: MIT
 
 ## 功能特性
 
 - 🔎 **自动审查模式**——自动编辑基座 + hook 门卫，安全的命令自动放行（实测 2~5 秒/次）
-- 🧼 **上下文干净**——安全子 agent 只看本次工具调用的 JSON，不接触对话历史，免疫对话内提示注入
+- 🧼 **上下文干净**——安全子 agent 只看本次工具调用的 JSON（+ 可选的脚本附件），不接触对话历史，免疫对话内提示注入
 - 🖥️ **插件审查对话框**（默认关闭）——现代化深色窗口：风险徽章 + 命令卡片 + 三段式分析；三按钮裁决「允许执行 / 本次会话允许 / 拒绝」，会话内放行同指令不再询问；不弹框时审批走客户端原生流程
 - 🔁 **fallback provider**——主 provider 不可用（超时 / HTTP 429 限额 / 缺密钥 / 输出异常）时自动切换备用 provider 继续审查，全部失败才转人工；对话框在锁屏/无交互桌面无法显示时自动回落客户端原生审批，绝不把"没弹框"误当用户拒绝
 - 🚧 **确定性危险规则层**——本地正则先行（deny 拦截 / ask 转人工 / allow 白名单），不经过 LLM；复合命令逐段审查，白名单无法被"白名单命令; 危险命令"绕过
-- ⚙️ **图形配置界面**——`/auto-review gui` 打开深色设置窗口：开关/审查工具/provider 与模型/超时缓存/危险规则管理，全组件统一风格
-- ✏️ **可定制审查策略**——安全子 agent 提示词全文可改，立即生效
+- 📜 **脚本内容随命令送审**（默认关闭）——开启后 python/node/bash 等调用的脚本文件内容自动读取并随载荷送审，审查基于脚本实际内容而非文件名猜测；脚本内容变化后缓存自动失效重审
+- ⚙️ **图形配置界面**——`/auto-review gui` 打开深色设置窗口：开关/审查工具/脚本送审/provider 与模型/超时缓存/危险规则管理，全组件统一风格
+- ✏️ **可定制审查策略**——提示词在 GUI 编辑器中全文显示、就地修改（契约字段校验），保存立即生效；`/security-prompt` 命令等价
 - 🔌 **provider 复用**——默认跟随主 agent 当前 provider，可指定其他 provider / 快模型（已适配 GLM 混合推理模型的 thinking 关闭）
 - 🛡️ **失败必保守**——LLM 超时/报错一律转人工，插件崩溃时阻断而非放行；默认关闭，显式开启才介入
 
@@ -51,8 +52,8 @@
 ## 测试
 
 ```bash
-node --test scripts/unit_tests.test.js   # 单元测试（19 项）
-node --test scripts/scenario_tests.test.js  # 场景固定测试（12 场景 + 2 锚定，离线）
+node --test scripts/unit_tests.test.js   # 单元测试（27 项）
+node --test scripts/scenario_tests.test.js  # 场景固定测试（18 场景 + 2 锚定，离线）
 node scripts/smoke_test.js               # 端到端冒烟（不触网，14 项断言组）
 node scripts/validate_ps.js              # GUI 的 PowerShell 脚本语法校验
 node scripts/llm_smoke.js                # 真实 LLM 链路（2 次真实调用）

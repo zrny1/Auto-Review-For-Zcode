@@ -1,6 +1,6 @@
 {
   "name": "auto-review",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "ZCode 自动审查权限插件（安全子agent门卫），运行时零第三方依赖",
   "type": "module",
   "private": true,
