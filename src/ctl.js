@@ -313,7 +313,7 @@ function dispatch(argv) {
     // 图形配置界面：阻塞至窗口关闭，随后输出当前状态摘要
     const t_ok = launchSettingsGui();
     if (!t_ok) {
-      throw new Error("图形界面启动失败（仅支持 Windows）");
+      throw new Error("图形配置界面仅支持 Windows（其他平台请使用命令式配置，如 /auto-review set enabled true）");
     }
     console.log("设置窗口已关闭。当前状态：");
     return cmdStatus();

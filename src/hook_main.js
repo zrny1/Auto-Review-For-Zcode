@@ -99,7 +99,7 @@ async function main() {
           t_decision.reason = `[auto-review] 用户在审查对话框中拒绝了该操作。\n${t_decision.reason}`;
           delete t_decision.additionalContext;
         } else {
-          logWrite("WARN", "dialog", "对话框基础设施故障，回落客户端审批");
+          logWrite("WARN", "dialog", "对话框不可用（非 Windows、锁屏/无交互桌面或基础设施故障），回落客户端审批");
         }
       }
     } catch (t_error) {

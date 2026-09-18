@@ -10,7 +10,7 @@
  *   - 规则匹配、会话白名单、缓存读写、LLM 载荷构造、输出解析与 reason 拼装
  *   - 脚本内容附加：提取 Bash 命令引用的脚本文件并读取内容随载荷送审（inspect_scripts）
  * 依赖: node:crypto node:fs node:os node:path ./common.js ./settings.js ./provider.js
- * 更新日期: 2026年09月05日
+ * 更新日期: 2026年09月18日
  */
 
 import { createHash } from "node:crypto";
@@ -47,6 +47,19 @@ const SCRIPT_EXTENSIONS = new Set(["sh", "bash", "py", "pyw", "js", "mjs", "cjs"
 
 // 命中即放弃该命令段的脚本提取：-c/-e 的代码已内联在命令文本里，-m 引用的是模块而非文件路径
 const SCRIPT_INLINE_FLAGS = new Set(["-c", "-e", "-m", "--command", "--eval", "--module"]);
+
+// 命令替换/进程替换构造：出现任一即意味着"表层文本 ≠ 实际执行内容"，
+// allow 白名单只对字面命令有意义，含替换构造的文本必须降级 LLM 审查
+const SUBSTITUTION_PATTERN = /`|\$\(|<\(|>\(/;
+
+/**
+ * 函数功能: 检测文本是否含命令替换/进程替换构造（反引号、$()、<()、>()）
+ * @param {string} text - 被检测文本
+ * @returns {boolean} 含替换构造返回 true（引号内的替换在 shell 中同样会执行，不区分位置）
+ */
+function hasCommandSubstitution(text) {
+  return SUBSTITUTION_PATTERN.test(String(text || ""));
+}
 
 // 可带脚本文件参数的解释器名单（powershell 走 -File 特判，cmd 走 /c、/k 特判）
 const SCRIPT_INTERPRETERS = new Set(["python", "python3", "py", "node", "deno", "bun", "bash", "sh", "zsh", "dash", "ruby", "perl", "pwsh"]);
@@ -88,19 +101,45 @@ function buildRuleText(tool_name, tool_input) {
 }
 
 /**
- * 函数功能: 危险规则层——本地正则按数组顺序匹配，首个命中生效
+ * 函数功能: 危险规则层——本地正则按数组顺序匹配，首个命中生效；
+ *           allow 命中在复合命令/含命令替换的文本上被抑制（复合交由逐段逻辑裁决，
+ *           单段替换则继续向后扫描让 deny/ask 仍然生效——保守方向优先）
  * @param {string} rule_text - 被匹配文本（命令全文或目标路径）
  * @returns {object|null} 命中的决策 {action, reason, source}，未命中返回 null
  */
 function matchDangerRules(rule_text) {
-  const t_rule = scanRules(rule_text);
+  if (!rule_text) {
+    return null;
+  }
+  // allow 抑制条件：复合命令（全文以白名单命令开头不代表其余子命令安全，防 "ls; rm -rf x"）
+  // 或含命令替换构造（防 "ls $(rm -rf x)"——替换在引号内外都会执行，字面量不能作保）
+  const t_is_compound = splitTopLevelCommands(rule_text).length > 1;
+  const t_has_subst = hasCommandSubstitution(rule_text);
+  let t_rule = null;
+  for (const t_candidate of loadDangerRules()) {
+    if (!t_candidate.regex.test(rule_text)) {
+      continue;
+    }
+    if (t_candidate.action === ACTION_ALLOW && (t_is_compound || t_has_subst)) {
+      if (t_is_compound) {
+        // 复合命令直接放弃全文裁决，交由 matchCompoundRules 逐段判定（reason 能指出命中子命令）
+        return null;
+      }
+      // 单段替换：跳过该 allow 继续向后扫描 deny/ask
+      continue;
+    }
+    t_rule = t_candidate;
+    break;
+  }
   if (!t_rule) {
     return null;
   }
   // allow 规则禁止作用于复合命令全文：全文以白名单命令开头不代表其余子命令安全
-  // （防 "ls; rm -rf x" 绕过）。复合命令的放行只能由 matchCompoundRules 逐段确认，
+  // （防 "ls; rm -rf x" 绕过），也禁止作用于含命令替换的文本（防 "ls $(rm -rf x)" 绕过——
+  // 替换构造在引号内外都会执行，表层字面量不能为实际执行内容作保）。
+  // 复合命令与含替换文本的放行只能由 matchCompoundRules 逐段确认或降级 LLM；
   // deny/ask 命中全文则维持原判定（拦截/转人工总是保守方向）
-  if (t_rule.action === ACTION_ALLOW && splitTopLevelCommands(rule_text).length > 1) {
+  if (t_rule.action === ACTION_ALLOW && (splitTopLevelCommands(rule_text).length > 1 || hasCommandSubstitution(rule_text))) {
     return null;
   }
   const t_desc = `危险规则 #${t_rule.index}: ${t_rule.description}`;
@@ -119,18 +158,25 @@ function matchDangerRules(rule_text) {
 }
 
 /**
- * 函数功能: 对单段文本按数组顺序扫描规则，返回首个命中的规则
- * @param {string} text - 被匹配文本
+ * 函数功能: 对单段文本按数组顺序扫描规则，返回首个命中的规则；allow 命中在文本含
+ *           命令替换构造时被抑制（跳过继续向后找 deny/ask——拦截方向总是保守的，
+ *           白名单不能替替换内容作保）
+ * @param {string} text - 被匹配文本（单段命令）
  * @returns {object|null} 命中的规则定义（含编译好的 regex/action/description/index）
  */
 function scanRules(text) {
   if (!text) {
     return null;
   }
+  const t_suppress_allow = hasCommandSubstitution(text);
   for (const t_rule of loadDangerRules()) {
-    if (t_rule.regex.test(text)) {
-      return t_rule;
+    if (!t_rule.regex.test(text)) {
+      continue;
     }
+    if (t_rule.action === ACTION_ALLOW && t_suppress_allow) {
+      continue;
+    }
+    return t_rule;
   }
   return null;
 }
@@ -428,8 +474,9 @@ function hashAttachments(attachments) {
 
 /**
  * 函数功能: 复合命令的逐段规则审查——每段独立匹配，任一段命中 deny/ask 即整体生效，
- *           全部段命中 allow 才整体放行，其余情况返回 null 降级 LLM 审查完整命令。
- *           防止 allow 规则（如 ^ls\\b）放行 "ls; rm -rf x" 这类以白名单命令开头的复合命令
+ *           全部段命中 allow 且无任何段含命令替换构造才整体放行，其余情况返回 null
+ *           降级 LLM 审查完整命令。防止 allow 规则（如 ^ls\b）放行 "ls; rm -rf x"
+ *           这类以白名单命令开头的复合命令，以及 "ls $(危险命令)" 这类单段替换绕过
  * @param {string} rule_text - 命令全文
  * @returns {object|null} 命中的决策 {action, reason}，需要 LLM 审查时返回 null
  */
@@ -455,6 +502,11 @@ function matchCompoundRules(rule_text) {
   }
   const t_unmatched = t_hits.filter((t_item) => !t_item.rule);
   if (t_unmatched.length === 0) {
+    // 任一段含命令替换构造（$()/反引号/进程替换）时整体不放行：替换内容不参与逐段
+    // 规则匹配，字面命中 allow 不能为其实际执行内容作保，降级 LLM 审查完整命令
+    if (t_hits.some((t_item) => hasCommandSubstitution(t_item.sub))) {
+      return null;
+    }
     const t_ids = t_hits.map((t_item) => `#${t_item.rule.index}`).join("、");
     return {
       action: ACTION_ALLOW,
@@ -920,6 +972,7 @@ export {
   buildRuleText,
   matchDangerRules,
   matchCompoundRules,
+  hasCommandSubstitution,
   matchSessionAllowlist,
   addSessionAllowlist,
   clearSessionAllowlist,

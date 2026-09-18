@@ -9,8 +9,8 @@
  * 功能:
  *   - launchSettingsGui: 阻塞式弹出设置窗口，关闭后返回
  *   - 提示词编辑器子窗口：显示全文、编辑、恢复出厂、契约字段校验后落盘（立即生效）
- * 依赖: node:child_process node:fs node:os node:path ./dialog.js(主题) ./common.js(路径)
- * 更新日期: 2026年09月05日
+ * 依赖: node:child_process node:fs node:os node:path ./dialog.js(主题) ./common.js(路径) ./provider.js(统一表)
+ * 更新日期: 2026年09月18日
  */
 
 import fs from "node:fs";
@@ -19,6 +19,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { THEME } from "./dialog.js";
+import { loadUnifiedProviderTable } from "./provider.js";
 import {
   SETTINGS_FILE,
   DANGER_RULES_FILE,
@@ -30,17 +31,6 @@ import {
 
 // 设置窗口的等待上限：用户可能长时间开着慢慢调，给足但不无限
 const GUI_HARD_LIMIT_MS = 6 * 3600 * 1000;
-
-// ZCode 配置文件候选（与 provider.js 的解析顺序一致）
-function zcodeConfigCandidates() {
-  if (process.env.AUTO_REVIEW_ZCODE_CONFIG) {
-    return [path.resolve(process.env.AUTO_REVIEW_ZCODE_CONFIG)];
-  }
-  return [
-    path.join(os.homedir(), ".zcode", "v2", "config.json"),
-    path.join(os.homedir(), ".zcode", "cli", "config.json"),
-  ];
-}
 
 // 设置窗口 PowerShell 脚本：现代化扁平布局，与审查对话框共用配色与圆角方案
 const GUI_PS_SCRIPT = [
@@ -420,9 +410,13 @@ function launchSettingsGui() {
   if (process.platform !== "win32") {
     return false;
   }
-  const t_candidates = zcodeConfigCandidates();
-  const t_zcode_cfg = t_candidates.find((t_p) => fs.existsSync(t_p)) || t_candidates[0];
+  // provider 下拉数据源：与 provider.js 共用统一表（provider_config.json 优先合并），
+  // 序列化为临时 JSON 文件交给 PowerShell 解析（环境变量有长度上限，不走 env）
+  let t_prov_file = "";
   try {
+    const t_unified = loadUnifiedProviderTable();
+    t_prov_file = path.join(os.tmpdir(), `ar_prov_table_${process.pid}.json`);
+    fs.writeFileSync(t_prov_file, JSON.stringify({ provider: t_unified.table }), "utf8");
     const t_result = spawnSync(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", GUI_PS_SCRIPT],
@@ -435,7 +429,7 @@ function launchSettingsGui() {
           AR_DEFAULT_RULES: DEFAULT_DANGER_RULES_FILE,
           AR_PROMPT_FILE: SECURITY_PROMPT_FILE(),
           AR_DEFAULT_PROMPT: DEFAULT_SECURITY_PROMPT_FILE,
-          AR_ZCODE_CFG: t_zcode_cfg,
+          AR_ZCODE_CFG: t_prov_file,
         },
         timeout: GUI_HARD_LIMIT_MS,
         windowsHide: true,
@@ -444,6 +438,11 @@ function launchSettingsGui() {
     return t_result.status === 0 || t_result.status === null;
   } catch {
     return false;
+  } finally {
+    // 临时表文件含 apiKey，窗口关闭后立即删除
+    if (t_prov_file) {
+      try { fs.unlinkSync(t_prov_file); } catch { /* 文件本就不存在，无需处理 */ }
+    }
   }
 }
 

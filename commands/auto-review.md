@@ -36,7 +36,7 @@ $ARGUMENTS
 - **`set <key> <value>`**：运行 `node "$CTL" set <key> <value>`（value 用引号包裹原样传递）。校验失败时把错误原样转述并给出合法取值说明：
   - `enabled`: true/false
   - `review_tools`: 字符串数组，如 `'["Bash"]'` 或 `Bash,Write`
-  - `provider`: provider 名称（留空跟随主 agent；可用值参考 `~/.zcode/v2/config.json` 中 provider 表的键，可带或不带 `builtin:` 前缀）
+  - `provider`: provider 名称（留空跟随主 agent；可用值参考 `~/.zcode/v2/provider_config.json` 与 `~/.zcode/v2/config.json` 中的 provider 键/名称，可带或不带 `builtin:` 前缀）
   - `model`: 模型名（推荐 flash 级快模型降低审查延迟）
   - `timeout_ms`: 5000~45000
   - `cache_ttl_seconds`: 0~86400（0 表示禁用缓存）
