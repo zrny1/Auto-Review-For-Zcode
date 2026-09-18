@@ -3,6 +3,45 @@
 > 时间维度的开发日志，记录 git 无法替代的背景、方案、影响与验证结果。
 > 每条记录关联对应 git 提交 ID。
 
+## 55bba28
+
+- 修改性质：bug 修复（安全）+ 新功能（新版配置适配）+ 文档/版本治理
+- 背景/需求：ZCode 更新至 3.12.3.7463 后的适配评审引出三项修复与两项调查——
+  ①上轮评审实测发现的 allow 白名单命令替换绕过（`ls $(危险载荷)` 整段被放行）；
+  ②平台声明缺失（非 Windows 用户静默降级）；③provider 读取未覆盖新版
+  `~/.zcode/v2/provider_config.json`；④调查 plugin.json userConfig 能否替代自建 GUI
+  及远程渲染；⑤调查脚本送审为何对安全子 agent 仍是黑箱。
+- 方案/决策：
+  - ①：新增 `hasCommandSubstitution`（反引号/`$()`/`<()`/`>()`）；关键取舍——allow
+    命中复合命令仍返回 null 交逐段逻辑（reason 能指向命中子命令，保持旧行为与旧
+    测试），单段含替换构造则抑制该 allow **并继续向后扫描 deny/ask**（首个命中被
+    抑制后，后续 deny 命中载荷文本仍拦截——保守方向优先，这是首版实现踩过再修正的
+    语义点）；逐段全 allow 但任一段含替换→整体降级 LLM；
+  - ③：provider_config 规则缺 enabled 标记、模板型规则缺 api.baseUrl（模板定义在
+    客户端内），纯文件级切换会破坏"跟随主 agent"与模板型 provider——放弃"整文件
+    优先"直译，改为**多源合并统一表**：规则（凭据/接入点/模型顺序，新版权威源）
+    按 providerId 覆盖合并进 v2 表（enabled 与模板型定义），providerName 注册别名，
+    无 enabled 时按 providerOrder 回落；GUI 下拉共用该表（临时 JSON 文件传递，
+    finally 删除防密钥残留）；测试隔离新增 `AUTO_REVIEW_PROVIDER_CONFIG`；
+  - ②：逆向确认当前清单 schema 无 platform 字段（zcode.cjs 中命中的 "platforms"
+    均为 Flutter CLI 参数），强加未知键有严格校验拒绝风险——采用描述级声明 +
+    gui 报错引导命令式配置 + 回落日志区分平台；
+  - ④结论（见归档）：userConfig 类型仅 string/number/boolean/directory/file，值存
+    `~/.zcode/cli/config.json` 的 `plugins.options`；`${user_config.*}` 展开仅 MCP
+    字段可用，hook 模板变量为枚举式正则不含 user_config、hook 进程 env 也不含——
+    hook 侧需自行读配置文件；可覆盖开关/数值/字符串类基础配置，无法覆盖 review_tools
+    多选、危险规则 CRUD、提示词编辑器与审批对话框（运行时 UI 与设置无关）；远程
+    场景值主机侧生效、不依赖宿主桌面，渲染入口为客户端插件管理界面（手机端有无
+    该界面无法在本机验证），架构上比 PowerShell GUI 更远程友好；
+  - ⑤结论：用户实际配置 `inspect_scripts: false`（0.2.3 该功能默认关闭且从未开启），
+    功能本身无缺陷（隔离环境五场景提取/读取全通过）——已按用户意图执行
+    `ctl set inspect_scripts true` 并实证 `scripts=1` 送审。
+- 影响范围：src/reviewer|provider|gui|hook_main|ctl、清单三处（0.2.4）、单元测试 +4、
+  README/FAQ/代码地图/变更记录/wiki 首页/命令文档。
+- 验证结果：单元 31/31、场景 20/20、冒烟 14 组、PS 校验双脚本全绿；真实配置解析
+  实证（统一表 18 键、Mimo 双路径解析、凭据取自规则、跟随主 agent 不变）；生产 hook
+  日志实证新 provider 代码与脚本送审均已生效。
+
 ## 0.2.3 周期（360a313 ~ ecda9d0，2026-09-05）
 
 - 修改性质：新功能（提示词 GUI 编辑器 + 脚本内容随命令送审）+ 测试 + 文档/版本治理
