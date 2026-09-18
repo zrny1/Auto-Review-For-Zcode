@@ -2,7 +2,7 @@
 
 > 在 ZCode 现有权限模式之上模拟"自动审查"：主 agent 保持自动编辑模式，由一个**上下文干净的安全子 agent**（PreToolUse hook + LLM）审查权限外的请求——安全的自动放行，不安全的在**插件审查对话框**中携带分析、风险点、影响范围由用户裁决。
 
-作者: hh-zyb ｜ 版本: 0.2.4 ｜ 技术栈: Node.js ≥ 18（零第三方依赖，GUI 为 PowerShell WinForms）｜ License: MIT
+作者: hh-zyb ｜ 版本: 0.2.5 ｜ 技术栈: Node.js ≥ 18（零第三方依赖，GUI 为 PowerShell WinForms）｜ License: MIT
 
 ## 功能特性
 

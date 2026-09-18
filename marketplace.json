@@ -5,7 +5,7 @@
       "name": "auto-review",
       "source": "./",
       "description": "自动审查权限插件：安全子agent 审查权限外请求，安全放行、危险转人工（审查内核全平台；对话框与图形配置仅 Windows，其余平台回落客户端审批）",
-      "version": "0.2.4"
+      "version": "0.2.5"
     }
   ]
 }

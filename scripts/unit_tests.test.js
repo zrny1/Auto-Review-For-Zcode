@@ -277,6 +277,8 @@ test("provider: provider_config 规则优先合并——凭据/接入点覆盖�
     // providerName 别名指向同一 entry
     const t_alias = resolveProviderOverride({ timeout_ms: 5000 }, "规则新增", "");
     assert.equal(t_alias.baseURL, t_new.baseURL);
+    // 别名键列表供 GUI 下拉过滤（避免与主键重复展示）
+    assert.deepEqual(loadUnifiedProviderTable().aliasKeys, ["规则新增"]);
 
     // 模板型规则（无接入点且表配置缺失）被跳过，不可选
     assert.throws(() => resolveProviderOverride({ timeout_ms: 5000 }, "template-only", ""), ProviderError);

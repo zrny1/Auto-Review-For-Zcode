@@ -153,10 +153,13 @@ const GUI_PS_SCRIPT = [
   "$cbProv.DropDownStyle='DropDownList'; $cbProv.BackColor=C '" + THEME.panel + "'; $cbProv.ForeColor=C '" + THEME.text + "'; $cbProv.FlatStyle='Flat'",
   "$cbProv.Location=New-Object System.Drawing.Point(110,274); $cbProv.Size=New-Object System.Drawing.Size(250,28)",
   "[void]$cbProv.Items.Add('（跟随主 agent）')",
-  "$provKeyMap=@{}",
-  "foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProv.Items.Add($dn); $provKeyMap[$dn]=$k }",
+  // 显示名优先取条目的 name（providerName），无 name 才回落去前缀的键；
+  // $provKeyMap: 显示名→键（保存时反查），$provKeyToDn: 键→显示名（回显当前选择）；
+  // 真同名碰撞时给后者追加括号键后缀去重（键唯一，显示名也随之为唯一）
+  "$provKeyMap=@{}; $provKeyToDn=@{}",
+  "foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; $e=$provTable.$k; if($e -and $e.name){ $dn=[string]$e.name }; if($provKeyMap.ContainsKey($dn)){ $dn=$dn+' ('+($k -replace '^builtin:','')+')' }; [void]$cbProv.Items.Add($dn); $provKeyMap[$dn]=$k; $provKeyToDn[$k]=$dn }",
   "$curProv=[string]$settings.provider",
-  "if(-not $curProv){ $cbProv.SelectedIndex=0 } else { $dn=$curProv -replace '^builtin:',''; if($cbProv.Items.Contains($dn)){ $cbProv.SelectedItem=$dn } else { $cbProv.SelectedIndex=0 } }",
+  "if(-not $curProv){ $cbProv.SelectedIndex=0 } else { $dn=$provKeyToDn[$curProv]; if(-not $dn){ $dn=$curProv -replace '^builtin:','' }; if($cbProv.Items.Contains($dn)){ $cbProv.SelectedItem=$dn } else { $cbProv.SelectedIndex=0 } }",
   "$l2=Lbl '模型' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l2.Location=New-Object System.Drawing.Point(400,278)",
   "$cbModel=New-Object System.Windows.Forms.ComboBox",
   "$cbModel.DropDownStyle='DropDownList'; $cbModel.BackColor=C '" + THEME.panel + "'; $cbModel.ForeColor=C '" + THEME.text + "'; $cbModel.FlatStyle='Flat'",
@@ -190,9 +193,9 @@ const GUI_PS_SCRIPT = [
   "$cbProvFb.DropDownStyle='DropDownList'; $cbProvFb.BackColor=C '" + THEME.panel + "'; $cbProvFb.ForeColor=C '" + THEME.text + "'; $cbProvFb.FlatStyle='Flat'",
   "$cbProvFb.Location=New-Object System.Drawing.Point(110,380); $cbProvFb.Size=New-Object System.Drawing.Size(250,28)",
   "[void]$cbProvFb.Items.Add('（无）')",
-  "foreach($k in $provKeys){ $dn=$k -replace '^builtin:',''; [void]$cbProvFb.Items.Add($dn) }",
+  "foreach($k in $provKeys){ [void]$cbProvFb.Items.Add($provKeyToDn[$k]) }",
   "$curFb=[string]$settings.fallback_provider",
-  "if(-not $curFb){ $cbProvFb.SelectedIndex=0 } else { $dn=$curFb -replace '^builtin:',''; if($cbProvFb.Items.Contains($dn)){ $cbProvFb.SelectedItem=$dn } else { $cbProvFb.SelectedIndex=0 } }",
+  "if(-not $curFb){ $cbProvFb.SelectedIndex=0 } else { $dn=$provKeyToDn[$curFb]; if(-not $dn){ $dn=$curFb -replace '^builtin:','' }; if($cbProvFb.Items.Contains($dn)){ $cbProvFb.SelectedItem=$dn } else { $cbProvFb.SelectedIndex=0 } }",
   "$l6=Lbl '模型' '" + THEME.text + "' 9 ([System.Drawing.FontStyle]::Regular); $l6.Location=New-Object System.Drawing.Point(400,384)",
   "$cbModelFb=New-Object System.Windows.Forms.ComboBox",
   "$cbModelFb.DropDownStyle='DropDownList'; $cbModelFb.BackColor=C '" + THEME.panel + "'; $cbModelFb.ForeColor=C '" + THEME.text + "'; $cbModelFb.FlatStyle='Flat'",
@@ -411,12 +414,20 @@ function launchSettingsGui() {
     return false;
   }
   // provider 下拉数据源：与 provider.js 共用统一表（provider_config.json 优先合并），
+  // 过滤别名键（providerName 与主键指向同一 provider，同时展示会重复），
   // 序列化为临时 JSON 文件交给 PowerShell 解析（环境变量有长度上限，不走 env）
   let t_prov_file = "";
   try {
     const t_unified = loadUnifiedProviderTable();
+    const t_alias = new Set(t_unified.aliasKeys);
+    const t_gui_table = {};
+    for (const [t_key, t_entry] of Object.entries(t_unified.table)) {
+      if (!t_alias.has(t_key)) {
+        t_gui_table[t_key] = t_entry;
+      }
+    }
     t_prov_file = path.join(os.tmpdir(), `ar_prov_table_${process.pid}.json`);
-    fs.writeFileSync(t_prov_file, JSON.stringify({ provider: t_unified.table }), "utf8");
+    fs.writeFileSync(t_prov_file, JSON.stringify({ provider: t_gui_table }), "utf8");
     const t_result = spawnSync(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", GUI_PS_SCRIPT],

@@ -1,6 +1,6 @@
 {
   "name": "auto-review",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "自动审查权限：上下文干净的安全子agent 审查主 agent 权限外的请求，安全的自动放行，不安全的携带分析与风险点转发用户审查；内置可定制危险规则层。审查内核全平台可用；审查对话框与图形配置界面仅 Windows，其他平台自动回落客户端原生审批。",
   "author": { "name": "hh-zyb" },
   "license": "MIT",

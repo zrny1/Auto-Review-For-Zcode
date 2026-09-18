@@ -90,8 +90,9 @@ function ruleModelList(rule_config) {
  *           provider_config 规则按 providerId 覆盖合并（凭据/接入点优先取规则，
  *           enabled 标记与模板型 provider 的 baseURL/模型仍以表配置为准），
  *           并为规则的 providerName 注册别名键；仅含凭据无法直连的规则（模板型）跳过
- * @returns {{table: object, orderHint: string[]}} 合并后的表（条目结构与 v2 表一致）与
- *            provider_config 的 providerOrder（无该文件时为空数组）
+ * @returns {{table: object, orderHint: string[], aliasKeys: string[]}} 合并后的表（条目
+ *            结构与 v2 表一致）、provider_config 的 providerOrder（无该文件为空数组）、
+ *            别名键列表（GUI 展示时需过滤，避免与主键重复）
  */
 function loadUnifiedProviderTable() {
   // ① 表配置：按优先级取第一个含 provider/providers 表的文件（找不到表时 entries 为空仍可由规则补充）
@@ -197,17 +198,19 @@ function loadUnifiedProviderTable() {
   }
 
   // ④ 别名：规则的 providerName 指向同一 entry（显式按名指定时可用），不覆盖既有键
+  const t_alias_keys = [];
   for (const t_rule of t_rules) {
     const t_name = t_rule.providerName && String(t_rule.providerName).trim();
     if (t_name && !t_table[t_name] && t_table[String(t_rule.providerId)]) {
       t_table[t_name] = t_table[String(t_rule.providerId)];
+      t_alias_keys.push(t_name);
     }
   }
 
   if (t_table_files.length > 0 || t_rules.length > 0) {
     logWrite("INFO", "provider", `配置源: 表(${t_table_files.join("、") || "无"}) + 规则(${t_rules.length}条)，共 ${Object.keys(t_table).length} 个键`);
   }
-  return { table: t_table, orderHint: t_order_hint };
+  return { table: t_table, orderHint: t_order_hint, aliasKeys: t_alias_keys };
 }
 
 /**
